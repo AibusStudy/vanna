@@ -7,11 +7,13 @@ from typing import DefaultDict, Dict, List, Optional, Set
 from .edge import EdgeCondition, WorkflowEdge
 from .node import WorkflowNode
 
+
 class WorkflowGraphError(ValueError):
     """Raised when a pre-LLM workflow graph is invalid."""
 
+
 class WorkflowGraph:
-    """Node-edge Graph executed by PreLlmWorkflowExecutor."""
+    """Node-edge graph executed by PreLlmWorkflowExecutor."""
 
     def __init__(self) -> None:
         self._nodes: Dict[str, WorkflowNode] = {}
@@ -24,12 +26,12 @@ class WorkflowGraph:
         return set(self._nodes.keys())
 
     def add_node(
-        self, 
-        node:WorkflowNode, 
-        *, 
-        start: bool=False, 
-        end:bool=False,
-    ) -> "WorkflowGraph" : 
+        self,
+        node: WorkflowNode,
+        *,
+        start: bool = False,
+        end: bool = False,
+    ) -> "WorkflowGraph":
         if node.node_id in self._nodes:
             raise WorkflowGraphError(f"Duplicate workflow node: {node.node_id}")
 
@@ -40,7 +42,7 @@ class WorkflowGraph:
 
         if end:
             self.add_end(node.node_id)
-        
+
         return self
 
     def set_start(self, node_id: str) -> "WorkflowGraph":
@@ -48,7 +50,7 @@ class WorkflowGraph:
         self.start_node_id = node_id
         return self
 
-    def add_end(self, node_id: str) -> "WorkflowGraph" :
+    def add_end(self, node_id: str) -> "WorkflowGraph":
         self._ensure_node_exists(node_id)
         self.end_node_ids.add(node_id)
         return self
@@ -61,7 +63,7 @@ class WorkflowGraph:
         condition: Optional[EdgeCondition] = None,
         label: Optional[str] = None,
     ) -> "WorkflowGraph":
-        self._ensure_node_exists(source_node_id),
+        self._ensure_node_exists(source_node_id)
         self._ensure_node_exists(target_node_id)
 
         self._edges_by_source[source_node_id].append(
@@ -69,7 +71,7 @@ class WorkflowGraph:
                 source_node_id=source_node_id,
                 target_node_id=target_node_id,
                 condition=condition,
-                label=label 
+                label=label,
             )
         )
         return self

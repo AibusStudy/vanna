@@ -7,7 +7,7 @@ between LLM services, tools, and conversation storage.
 
 import traceback
 import uuid
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from vanna.components import (
     UiComponent,
@@ -32,6 +32,11 @@ from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.core.lifecycle import LifecycleHook
 from vanna.core.middleware import LlmMiddleware
 from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
+from vanna.core.pre_llm_workflow import (
+    PreLlmWorkflowExecutor,
+    WorkflowFinalResult,
+    WorkflowInput,
+)
 from vanna.core.recovery import ErrorRecoveryStrategy, RecoveryActionType
 from vanna.core.enricher import ToolContextEnricher
 from vanna.core.enhancer import LlmContextEnhancer, DefaultLlmContextEnhancer
@@ -97,6 +102,7 @@ class Agent:
         conversation_filters: List[ConversationFilter] = [],
         observability_provider: Optional[ObservabilityProvider] = None,
         audit_logger: Optional[AuditLogger] = None,
+        pre_llm_workflow_executor: Optional[PreLlmWorkflowExecutor] = None,
     ):
         self.llm_service = llm_service
         self.tool_registry = tool_registry
@@ -131,6 +137,15 @@ class Agent:
         self.conversation_filters = conversation_filters
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
+
+        #pre_llm_workflow 관련 agent.config.py 적용 부분
+        # max_steps와 retry_limit 적용
+        self.pre_llm_workflow_executor = pre_llm_workflow_executor
+        if isinstance(self.pre_llm_workflow_executor, PreLlmWorkflowExecutor):
+            self.pre_llm_workflow_executor.max_steps = self.config.max_workflow_steps
+            self.pre_llm_workflow_executor.retry_limit = (
+                self.config.workflow_retry_limit
+            )
 
         # Wire audit logger into tool registry
         if self.audit_logger and self.config.audit_config.enabled:
@@ -512,7 +527,8 @@ class Agent:
             await self.conversation_store.update_conversation(conversation)
 
         # Not triggered, add user message to conversation now
-        conversation.add_message(Message(role="user", content=message))
+        user_message = Message(role="user", content=message)
+        conversation.add_message(user_message)
 
         # Add initial task
         context_task = Task(
@@ -600,6 +616,51 @@ class Agent:
             user, tool_schemas
         )
 
+        # pre_llm_workflow
+        #system prompt build 이후 ~ enhance 전에 실행
+        workflow_result: Optional[WorkflowFinalResult] = None
+        workflow_metadata: Optional[Dict[str, Any]] = None
+        
+        if self.config.enable_pre_llm_workflow and self.pre_llm_workflow_executor:
+            try:
+                workflow_input = WorkflowInput(
+                    user_id=user.id,
+                    conversation_id=conversation_id,
+                    request_id=request_id,
+                    original_message=message,
+                    system_prompt=system_prompt,
+                    tool_names=[tool.name for tool in tool_schemas],
+                    metadata={
+                        "request_context": request_context.metadata,
+                        "tool_context": context.metadata,
+                    },
+                )
+
+                workflow_result = await self.pre_llm_workflow_executor.run(
+                    workflow_input
+                )
+                workflow_metadata = workflow_result.to_metadata()
+
+            except Exception as e:
+                workflow_result = WorkflowFinalResult(
+                    status="failed",
+                    errors=[f"Pre-LLM workflow failed: {str(e)}"],
+                )
+                workflow_metadata = workflow_result.to_metadata()
+
+            if self.config.attach_pre_llm_workflow_metadata and workflow_metadata:
+                context.metadata["pre_llm_workflow"] = workflow_metadata
+
+                if workflow_result.structured_output:
+                    context.metadata["structured_question"] = (
+                        workflow_result.structured_output
+                    )
+
+            if self.config.persist_pre_llm_workflow_metadata and workflow_metadata:
+                user_message.metadata["pre_llm_workflow"] = workflow_metadata
+                conversation.metadata["last_pre_llm_workflow"] = workflow_metadata
+
+
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
             enhancement_span = None
@@ -611,8 +672,11 @@ class Agent:
                     },
                 )
 
-            system_prompt = await self.llm_context_enhancer.enhance_system_prompt(
-                system_prompt, message, user
+            system_prompt = await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
+                system_prompt,
+                message,
+                user,
+                workflow_result,
             )
 
             if self.observability_provider and enhancement_span:
@@ -636,8 +700,20 @@ class Agent:
                 )
 
         # Build LLM request
+        # pre_llm_workflow의 결과를 toolContext와 LlmRequest.metadata에 붙일지 결정
+        llm_request_metadata: Dict[str, Any] = {}
+        if (
+            self.config.attach_pre_llm_workflow_metadata
+            and workflow_metadata is not None
+        ):
+            llm_request_metadata["pre_llm_workflow"] = workflow_metadata
+
         request = await self._build_llm_request(
-            conversation, tool_schemas, user, system_prompt
+            conversation, 
+            tool_schemas,
+            user,
+            system_prompt,
+            metadata=llm_request_metadata,
         )
 
         # Process with tool loop
@@ -1008,7 +1084,11 @@ class Agent:
 
                 # Rebuild request with tool responses
                 request = await self._build_llm_request(
-                    conversation, tool_schemas, user, system_prompt
+                    conversation,
+                    tool_schemas,
+                    user,
+                    system_prompt,
+                    metadata=llm_request_metadata,
                 )
             else:
                 # Update status to idle and set completion message
@@ -1163,6 +1243,7 @@ You can:
         tool_schemas: List[ToolSchema],
         user: User,
         system_prompt: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> LlmRequest:
         """Build LLM request from conversation and tools."""
         # Apply conversation filters with observability
@@ -1236,6 +1317,7 @@ You can:
             max_tokens=self.config.max_tokens,
             stream=self.config.stream_responses,
             system_prompt=system_prompt,
+            metadata=metadata or {},
         )
 
     async def _send_llm_request(self, request: LlmRequest) -> LlmResponse:
@@ -1404,4 +1486,4 @@ You can:
                         },
                     )
 
-        return response
+        return response#

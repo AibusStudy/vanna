@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from ..user.models import User
     from ..llm.models import LlmMessage
+    from ..pre_llm_workflow import WorkflowFinalResult
 
 
 class LlmContextEnhancer(ABC):
@@ -92,3 +93,16 @@ class LlmContextEnhancer(ABC):
             Be careful not to add context repeatedly on each iteration.
         """
         return messages
+
+    async def enhance_system_prompt_with_workflow(
+        self,
+        system_prompt: str,
+        user_message: str,
+        user: "User",
+        workflow_result: Optional["WorkflowFinalResult"] = None,
+    ) -> str:
+        return await self.enhance_system_prompt(
+            system_prompt,
+            user_message,
+            user,
+        )

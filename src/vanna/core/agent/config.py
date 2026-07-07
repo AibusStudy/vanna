@@ -121,3 +121,10 @@ class AgentConfig(BaseModel):
     max_tokens: Optional[int] = Field(default=None, gt=0)
     ui_features: UiFeatures = Field(default_factory=UiFeatures)
     audit_config: AuditConfig = Field(default_factory=AuditConfig)
+
+    # Pre-LLM workflow
+    enable_pre_llm_workflow: bool = Field(default=False)
+    max_workflow_steps: int = Field(default=10, gt=0)
+    workflow_retry_limit: int = Field(default=1, ge=0)
+    attach_pre_llm_workflow_metadata: bool = Field(default=True)
+    persist_pre_llm_workflow_metadata: bool = Field(default=True)

@@ -1,4 +1,11 @@
-"""Tests for Agent integration with the optional pre-LLM workflow."""
+"""Tests for Agent integration with the optional pre-LLM workflow.
+
+test 항목
+- Agent가 LLM request metadata에 workflow 결과 전달
+- workflow disabled 시 기존 동작 유지
+- workflow 예외 발생 시 LLM 호출 fallback
+- tool context에 pre_llm_workflow, structured_question 전달
+"""
 
 from __future__ import annotations
 

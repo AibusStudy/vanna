@@ -1,4 +1,15 @@
-"""Tests for the pre-LLM workflow executor with fake nodes."""
+"""Tests for the pre-LLM workflow executor with fake nodes.
+
+test 항목
+- workflow fake SQL 경로 성공
+- general intent skip
+- WorkflowFinalResult metadata 전달
+- retry limit 초과
+- max steps 초과
+- start node 없음 검증
+- end node 없음 검증
+- unreachable node 검증
+"""
 
 from __future__ import annotations
 

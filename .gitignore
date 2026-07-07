@@ -29,3 +29,4 @@ frontends/**/.mypy_cache/
 
 #docs
 .docs/
+docs/

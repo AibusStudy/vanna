@@ -138,6 +138,11 @@ class Agent:
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
         self.pre_llm_workflow_executor = pre_llm_workflow_executor
+        if isinstance(self.pre_llm_workflow_executor, PreLlmWorkflowExecutor):
+            self.pre_llm_workflow_executor.max_steps = self.config.max_workflow_steps
+            self.pre_llm_workflow_executor.retry_limit = (
+                self.config.workflow_retry_limit
+            )
 
         # Wire audit logger into tool registry
         if self.audit_logger and self.config.audit_config.enabled:

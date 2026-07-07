@@ -22,7 +22,14 @@ sys.path.insert(0, str(SRC_PATH))
 
 from vanna import Agent, AgentConfig
 from vanna.core.llm import LlmRequest, LlmResponse, LlmService, LlmStreamChunk
-from vanna.core.pre_llm_workflow import WorkflowFinalResult, WorkflowInput
+from vanna.core.pre_llm_workflow import (
+    NodeResult,
+    PreLlmWorkflowExecutor,
+    WorkflowFinalResult,
+    WorkflowGraph,
+    WorkflowInput,
+    WorkflowState,
+)
 from vanna.core.registry import ToolRegistry
 from vanna.core.tool import Tool, ToolCall, ToolContext, ToolResult
 from vanna.core.user import User
@@ -87,6 +94,13 @@ class FailingWorkflowExecutor:
     async def run(self, workflow_input: WorkflowInput) -> WorkflowFinalResult:
         self.inputs.append(workflow_input)
         raise RuntimeError("workflow boom")
+
+
+class FinishWorkflowNode:
+    node_id = "finish"
+
+    async def run(self, state: WorkflowState) -> NodeResult:
+        return NodeResult(status="finish")
 
 
 class EmptyArgs(BaseModel):
@@ -234,3 +248,26 @@ async def test_agent_attaches_workflow_metadata_to_tool_context() -> None:
         "intent": "sql",
         "target_entity": "sales_order",
     }
+
+
+def test_agent_applies_configured_workflow_limits_to_executor() -> None:
+    graph = WorkflowGraph()
+    graph.add_node(FinishWorkflowNode(), start=True, end=True)
+    workflow_executor = PreLlmWorkflowExecutor(graph, max_steps=99, retry_limit=99)
+
+    Agent(
+        llm_service=RecordingLlmService(),
+        tool_registry=ToolRegistry(),
+        user_resolver=SimpleUserResolver(),
+        agent_memory=DemoAgentMemory(max_items=100),
+        config=AgentConfig(
+            enable_pre_llm_workflow=True,
+            max_workflow_steps=3,
+            workflow_retry_limit=2,
+            stream_responses=False,
+        ),
+        pre_llm_workflow_executor=workflow_executor,
+    )
+
+    assert workflow_executor.max_steps == 3
+    assert workflow_executor.retry_limit == 2

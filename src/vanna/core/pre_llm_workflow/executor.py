@@ -134,6 +134,9 @@ class PreLlmWorkflowExecutor:
             status=status,
             intent=self._extract_intent(state),
             structured_output=state.structured_question,
+            prompt_metadata=dict(state.prompt_metadata),
+            request_metadata=dict(state.request_metadata),
+            debug_metadata=dict(state.debug_metadata),
             errors=errors,
             retry_counts=state.retry_counts,
         )

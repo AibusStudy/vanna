@@ -137,6 +137,9 @@ class Agent:
         self.conversation_filters = conversation_filters
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
+
+        #pre_llm_workflow 관련 agent.config.py 적용 부분
+        # max_steps와 retry_limit 적용
         self.pre_llm_workflow_executor = pre_llm_workflow_executor
         if isinstance(self.pre_llm_workflow_executor, PreLlmWorkflowExecutor):
             self.pre_llm_workflow_executor.max_steps = self.config.max_workflow_steps
@@ -613,9 +616,11 @@ class Agent:
             user, tool_schemas
         )
 
+        # pre_llm_workflow
+        #system prompt build 이후 ~ enhance 전에 실행
         workflow_result: Optional[WorkflowFinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
-
+        
         if self.config.enable_pre_llm_workflow and self.pre_llm_workflow_executor:
             try:
                 workflow_input = WorkflowInput(
@@ -654,6 +659,7 @@ class Agent:
             if self.config.persist_pre_llm_workflow_metadata and workflow_metadata:
                 user_message.metadata["pre_llm_workflow"] = workflow_metadata
                 conversation.metadata["last_pre_llm_workflow"] = workflow_metadata
+
 
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
@@ -694,6 +700,7 @@ class Agent:
                 )
 
         # Build LLM request
+        # pre_llm_workflow의 결과를 toolContext와 LlmRequest.metadata에 붙일지 결정
         llm_request_metadata: Dict[str, Any] = {}
         if (
             self.config.attach_pre_llm_workflow_metadata
@@ -702,7 +709,7 @@ class Agent:
             llm_request_metadata["pre_llm_workflow"] = workflow_metadata
 
         request = await self._build_llm_request(
-            conversation,
+            conversation, 
             tool_schemas,
             user,
             system_prompt,
@@ -1479,4 +1486,4 @@ You can:
                         },
                     )
 
-        return response
+        return response#

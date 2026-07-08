@@ -81,9 +81,6 @@ class StaticWorkflowExecutor:
                 "intent": "sql",
                 "target_entity": "sales_order",
             },
-            prompt_metadata={"prompt_hint": "use_structured_question"},
-            request_metadata={"request_hint": "attach_to_llm_request"},
-            debug_metadata={"debug_hint": "test_executor"},
         )
 
 
@@ -172,11 +169,13 @@ async def test_agent_attaches_pre_llm_workflow_metadata_to_llm_request() -> None
     assert metadata["status"] == "success"
     assert metadata["intent"] == "sql"
     assert metadata["structured_output"]["target_entity"] == "sales_order"
-    assert metadata["prompt_metadata"] == {"prompt_hint": "use_structured_question"}
-    assert metadata["request_metadata"] == {
-        "request_hint": "attach_to_llm_request"
+    assert set(metadata) == {
+        "status",
+        "intent",
+        "structured_output",
+        "errors",
+        "retry_counts",
     }
-    assert metadata["debug_metadata"] == {"debug_hint": "test_executor"}
 
 
 @pytest.mark.asyncio

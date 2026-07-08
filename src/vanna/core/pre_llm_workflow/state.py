@@ -41,8 +41,6 @@ class NodeResult:
     output: Any = None
     routing_intent: Optional[str] = None
     structured_question: Optional[Dict[str, Any]] = None
-    prompt_metadata: Dict[str, Any] = field(default_factory=dict)
-    request_metadata: Dict[str, Any] = field(default_factory=dict)
     debug_metadata: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
 
@@ -59,10 +57,7 @@ class WorkflowState:
     last_node_result: Optional[NodeResult] = None
 
     structured_question: Optional[Dict[str, Any]] = None
-    final_status: Optional[WorkflowStatus] = None
 
-    prompt_metadata: Dict[str, Any] = field(default_factory=dict)
-    request_metadata: Dict[str, Any] = field(default_factory=dict)
     debug_metadata: Dict[str, Any] = field(default_factory=dict)
 
     retry: RetryState = field(default_factory=RetryState)
@@ -91,9 +86,6 @@ class WorkflowFinalResult:
     status: WorkflowStatus
     intent: Optional[str] = None
     structured_output: Optional[Dict[str, Any]] = None
-    prompt_metadata: Dict[str, Any] = field(default_factory=dict)
-    request_metadata: Dict[str, Any] = field(default_factory=dict)
-    debug_metadata: Dict[str, Any] = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
     retry_counts: Dict[str, int] = field(default_factory=dict)
 
@@ -102,9 +94,6 @@ class WorkflowFinalResult:
             "status": self.status,
             "intent": self.intent,
             "structured_output": self.structured_output,
-            "prompt_metadata": dict(self.prompt_metadata),
-            "request_metadata": dict(self.request_metadata),
-            "debug_metadata": dict(self.debug_metadata),
             "errors": list(self.errors),
             "retry_counts": dict(self.retry_counts),
         }
@@ -126,8 +115,6 @@ def apply_node_result(
     if result.structured_question is not None:
         state.structured_question = result.structured_question
 
-    state.prompt_metadata.update(result.prompt_metadata)
-    state.request_metadata.update(result.request_metadata)
     state.debug_metadata.update(result.debug_metadata)
 
     if result.error:

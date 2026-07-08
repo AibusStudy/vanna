@@ -56,8 +56,6 @@ class MetadataFinishNode:
         return NodeResult(
             status="finish",
             structured_question={"intent": "sql", "target_entity": "invoice"},
-            prompt_metadata={"prompt_hint": "prefer_invoice_tables"},
-            request_metadata={"request_hint": "include_workflow"},
             debug_metadata={"node_version": "test"},
         )
 
@@ -101,7 +99,7 @@ async def test_fake_general_workflow_is_skipped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_workflow_final_result_includes_metadata() -> None:
+async def test_workflow_final_result_exposes_minimal_metadata() -> None:
     graph = WorkflowGraph()
     graph.add_node(MetadataFinishNode(), start=True, end=True)
     executor = PreLlmWorkflowExecutor(graph)
@@ -109,13 +107,15 @@ async def test_workflow_final_result_includes_metadata() -> None:
     result = await executor.run(build_input())
 
     assert result.status == "success"
+    assert result.intent == "sql"
     assert result.structured_output == {"intent": "sql", "target_entity": "invoice"}
-    assert result.prompt_metadata == {"prompt_hint": "prefer_invoice_tables"}
-    assert result.request_metadata == {"request_hint": "include_workflow"}
-    assert result.debug_metadata == {"node_version": "test"}
-    assert result.to_metadata()["prompt_metadata"] == result.prompt_metadata
-    assert result.to_metadata()["request_metadata"] == result.request_metadata
-    assert result.to_metadata()["debug_metadata"] == result.debug_metadata
+    assert result.to_metadata() == {
+        "status": "success",
+        "intent": "sql",
+        "structured_output": {"intent": "sql", "target_entity": "invoice"},
+        "errors": [],
+        "retry_counts": {},
+    }
 
 
 @pytest.mark.asyncio

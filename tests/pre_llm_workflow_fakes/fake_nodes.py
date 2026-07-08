@@ -123,7 +123,7 @@ class FakeStructuredQuestionValidatorNode:
         return NodeResult(
             status="finish",
             output={"valid": True},
-            request_metadata={"validated_by": "fake"},
+            debug_metadata={"validated_by": "fake"},
         )
 
 

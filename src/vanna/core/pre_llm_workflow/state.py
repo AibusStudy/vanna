@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
+if TYPE_CHECKING:
+    from vanna.core.components import UiComponent
 
 NodeStatus = Literal["success", "failed", "retry", "finish", "skipped"]
 WorkflowStatus = Literal["success", "failed", "skipped"]
@@ -121,3 +123,22 @@ def apply_node_result(
         state.add_error(result.error)
 
     return state
+
+
+@dataclass(frozen=True)
+class WorkflowFinalResult:
+    status: WorkflowStatus
+    intent: Optional[str] = None
+    structured_output: Optional[Dict[str, Any]] = None
+    ui_component: Optional["UiComponent"] = None
+    errors: List[str] = field(default_factory=list)
+    retry_counts: Dict[str, int] = field(default_factory=dict)
+
+    def to_metadata(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "intent": self.intent,
+            "structured_output": self.structured_output,
+            "errors": list(self.errors),
+            "retry_counts": dict(self.retry_counts),
+        }

@@ -817,29 +817,13 @@ class Agent:
 
                     response_str = response.content
 
-                    tool_display_metadata = tool_call.arguments
-                    tool_description = (
-                        f"Running tool with {len(tool_call.arguments)} arguments"
-                    )
-
-                    if tool_call.name == "run_sql":
-                        tool_display_metadata = {
-                            "generated_sql_before_validation": (
-                                tool_call.arguments.get("sql", "")
-                            )
-                        }
-                        tool_description = (
-                            "LLM이 생성한 수정 전 SQL입니다. "
-                            "실제 실행 SQL은 검증 과정에서 변경될 수 있습니다."
-                        )
-
                     # Use primitive StatusCard instead of semantic ToolExecutionComponent
                     tool_status_card = StatusCardComponent(
                         title=f"Executing {tool_call.name}",
                         status="running",
-                        description=tool_description,
+                        description=f"Running tool with {len(tool_call.arguments)} arguments",
                         icon="⚙️",
-                        metadata=tool_display_metadata,
+                        metadata=tool_call.arguments,
                     )
 
                     has_tool_args_access = (
@@ -971,11 +955,18 @@ class Agent:
 
                     # Update status card to show completion
                     final_status = "success" if result.success else "error"
-                    final_description = (
-                        f"Tool completed successfully"
-                        if result.success
-                        else f"Tool failed: {result.error or 'Unknown error'}"
-                    )
+                    if result.success:
+                        final_description = "Tool completed successfully"
+                        if tool_call.name == "run_sql":
+                            final_description += (
+                                "\nParameters의 SQL은 LLM이 생성한 수정 전 "
+                                "SQL이며, 실제 실행 SQL은 검증 과정에서 "
+                                "변경될 수 있습니다."
+                            )
+                    else:
+                        final_description = (
+                            f"Tool failed: {result.error or 'Unknown error'}"
+                        )
 
                     has_tool_args_access_2 = (
                         self.config.ui_features.can_user_access_feature(

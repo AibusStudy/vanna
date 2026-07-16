@@ -822,13 +822,29 @@ class Agent:
 
                     response_str = response.content
 
+                    tool_display_metadata = tool_call.arguments
+                    tool_description = (
+                        f"Running tool with {len(tool_call.arguments)} arguments"
+                    )
+
+                    if tool_call.name == "run_sql":
+                        tool_display_metadata = {
+                            "generated_sql_before_validation": (
+                                tool_call.arguments.get("sql", "")
+                            )
+                        }
+                        tool_description = (
+                            "LLM이 생성한 수정 전 SQL입니다. "
+                            "실제 실행 SQL은 검증 과정에서 변경될 수 있습니다."
+                        )
+
                     # Use primitive StatusCard instead of semantic ToolExecutionComponent
                     tool_status_card = StatusCardComponent(
                         title=f"Executing {tool_call.name}",
                         status="running",
-                        description=f"Running tool with {len(tool_call.arguments)} arguments",
+                        description=tool_description,
                         icon="⚙️",
-                        metadata=tool_call.arguments,
+                        metadata=tool_display_metadata,
                     )
 
                     has_tool_args_access = (

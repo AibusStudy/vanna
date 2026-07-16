@@ -746,7 +746,6 @@ export const richComponentStyles = css`
     margin: 0 0 var(--vanna-space-3) 0;
     font-size: 0.875rem;
     color: var(--vanna-foreground-dimmer);
-    white-space: pre-line;
   }
 
   .dataframe-meta {
@@ -988,7 +987,6 @@ export const richComponentStyles = css`
   .status-card-content {
     padding: var(--vanna-space-4) var(--vanna-space-5);
     line-height: 1.5;
-    white-space: pre-line;
     transition: all var(--vanna-duration-200) ease;
     overflow: hidden;
   }

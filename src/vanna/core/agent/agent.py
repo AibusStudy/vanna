@@ -959,7 +959,7 @@ class Agent:
                         final_description = "Tool completed successfully"
                         if tool_call.name == "run_sql":
                             final_description += (
-                                "\nParameters의 SQL은 LLM이 생성한 수정 전 "
+                                "<br>Parameters의 SQL은 LLM이 생성한 수정 전 "
                                 "SQL이며, 실제 실행 SQL은 검증 과정에서 "
                                 "변경될 수 있습니다."
                             )

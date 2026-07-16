@@ -74,7 +74,8 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                             columns=[],
                             title="Query Results",
                             description=(
-                                f"실제 실행 SQL:\n{display_sql}\n\nNo rows returned"
+                                f"실제 실행 SQL:<br>{display_sql}"
+                                "<br><br>No rows returned"
                             ),
                         ),
                         simple_component=SimpleTextComponent(text=result),
@@ -114,7 +115,8 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         records=cast(List[Dict[str, Any]], results_data),
                         title="Query Results",
                         description=(
-                            f"실제 실행 SQL:\n{display_sql}\n\nSQL query returned "
+                            f"실제 실행 SQL:<br>{display_sql}"
+                            "<br><br>SQL query returned "
                             f"{row_count} rows with {len(columns)} columns"
                         ),
                     )

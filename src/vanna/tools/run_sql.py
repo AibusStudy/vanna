@@ -1,5 +1,6 @@
 """Generic SQL query execution tool with dependency injection."""
 
+import html
 from typing import Any, Dict, List, Optional, Type, cast
 import uuid
 from vanna.core.tool import Tool, ToolContext, ToolResult
@@ -61,6 +62,7 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
 
             # Determine query type
             query_type = args.sql.strip().upper().split()[0]
+            display_sql = html.escape(" ".join(args.sql.split()))
 
             if query_type == "SELECT":
                 # Handle SELECT queries with results
@@ -71,7 +73,9 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                             rows=[],
                             columns=[],
                             title="Query Results",
-                            description="No rows returned",
+                            description=(
+                                f"Executed SQL: {display_sql} — No rows returned"
+                            ),
                         ),
                         simple_component=SimpleTextComponent(text=result),
                     )
@@ -109,7 +113,10 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                     dataframe_component = DataFrameComponent.from_records(
                         records=cast(List[Dict[str, Any]], results_data),
                         title="Query Results",
-                        description=f"SQL query returned {row_count} rows with {len(columns)} columns",
+                        description=(
+                            f"Executed SQL: {display_sql} — SQL query returned "
+                            f"{row_count} rows with {len(columns)} columns"
+                        ),
                     )
 
                     ui_component = UiComponent(

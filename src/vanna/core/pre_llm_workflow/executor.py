@@ -70,6 +70,16 @@ class PreLlmWorkflowExecutor:
                 attempts = state.retry.increment(current_node_id)
 
                 if attempts <= self.retry_limit:
+                    # A retry may follow an explicitly conditioned edge. Ignore
+                    # unconditional edges so existing nodes keep self-retrying.
+                    retry_edge = await self._select_next_edge(
+                        state,
+                        current_node_id,
+                        result,
+                        require_condition=True,
+                    )
+                    if retry_edge is not None:
+                        current_node_id = retry_edge.target_node_id
                     continue
 
                 return self._finalize(
@@ -114,8 +124,12 @@ class PreLlmWorkflowExecutor:
         state: WorkflowState,
         source_node_id: str,
         last_result: NodeResult,
+        *,
+        require_condition: bool = False,
     ) -> Optional[WorkflowEdge]:
         for edge in self.graph.get_edges(source_node_id):
+            if require_condition and edge.condition is None:
+                continue
             if await edge.matches(state, last_result):
                 return edge
 

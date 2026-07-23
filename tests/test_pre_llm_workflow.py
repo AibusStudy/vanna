@@ -41,6 +41,56 @@ class AlwaysRetryNode:
         return NodeResult(status="retry", error="retry requested")
 
 
+class RetryStatusIs:
+    def __init__(self, status: str) -> None:
+        self.status = status
+
+    async def evaluate(
+        self,
+        state: WorkflowState,
+        last_node_result: NodeResult,
+    ) -> bool:
+        return last_node_result.status == self.status
+
+
+class RegeneratingNode:
+    node_id = "structuring_node"
+
+    async def run(self, state: WorkflowState) -> NodeResult:
+        generation = state.visited_nodes.count(self.node_id)
+        return NodeResult(
+            status="success",
+            structured_question={"generation": generation},
+        )
+
+
+class RetryOnceThenFinishNode:
+    node_id = "validation_node"
+
+    async def run(self, state: WorkflowState) -> NodeResult:
+        if state.retry.get_attempts(self.node_id) == 0:
+            return NodeResult(
+                status="retry",
+                output={"reason": "regeneration required"},
+            )
+
+        return NodeResult(status="finish")
+
+
+class RetryOnceThenSucceedNode:
+    node_id = "retry_then_succeed"
+
+    async def run(self, state: WorkflowState) -> NodeResult:
+        attempts = state.retry.get_attempts(self.node_id)
+        if attempts == 0:
+            return NodeResult(status="retry")
+
+        return NodeResult(
+            status="success",
+            structured_question={"attempts": attempts + 1},
+        )
+
+
 class SuccessfulNode:
     def __init__(self, node_id: str) -> None:
         self.node_id = node_id
@@ -129,6 +179,42 @@ async def test_retry_limit_exceeded_returns_failed_result() -> None:
     assert result.status == "failed"
     assert result.retry_counts == {"retry_node": 2}
     assert "Retry limit exceeded for node: retry_node" in result.errors
+
+
+@pytest.mark.asyncio
+async def test_retry_follows_matching_edge_and_preserves_retry_count() -> None:
+    graph = WorkflowGraph()
+    graph.add_node(RegeneratingNode(), start=True)
+    graph.add_node(RetryOnceThenFinishNode(), end=True)
+    graph.add_edge("structuring_node", "validation_node")
+    graph.add_edge(
+        "validation_node",
+        "structuring_node",
+        condition=RetryStatusIs("retry"),
+        label="regenerate",
+    )
+    executor = PreLlmWorkflowExecutor(graph, retry_limit=1)
+
+    result = await executor.run(build_input())
+
+    assert result.status == "success"
+    assert result.structured_output == {"generation": 2}
+    assert result.retry_counts == {"validation_node": 1}
+
+
+@pytest.mark.asyncio
+async def test_retry_ignores_unconditional_edge_and_retries_current_node() -> None:
+    graph = WorkflowGraph()
+    graph.add_node(RetryOnceThenSucceedNode(), start=True)
+    graph.add_node(SuccessfulNode("end"), end=True)
+    graph.add_edge("retry_then_succeed", "end")
+    executor = PreLlmWorkflowExecutor(graph, retry_limit=1)
+
+    result = await executor.run(build_input())
+
+    assert result.status == "success"
+    assert result.structured_output == {"attempts": 2}
+    assert result.retry_counts == {"retry_then_succeed": 1}
 
 
 @pytest.mark.asyncio

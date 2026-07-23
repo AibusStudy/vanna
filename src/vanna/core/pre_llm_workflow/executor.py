@@ -16,7 +16,6 @@ from .state import (
     apply_node_result,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -70,8 +69,7 @@ class PreLlmWorkflowExecutor:
                 attempts = state.retry.increment(current_node_id)
 
                 if attempts <= self.retry_limit:
-                    # A retry may follow an explicitly conditioned edge. Ignore
-                    # unconditional edges so existing nodes keep self-retrying.
+                    # conditional edge에 따른 node 이동
                     retry_edge = await self._select_next_edge(
                         state,
                         current_node_id,

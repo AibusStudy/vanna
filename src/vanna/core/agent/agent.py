@@ -138,7 +138,7 @@ class Agent:
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
 
-        # pre_llm_workflow 관련 agent.config.py 적용 부분
+        #pre_llm_workflow 관련 agent.config.py 적용 부분
         # max_steps와 retry_limit 적용
         self.pre_llm_workflow_executor = pre_llm_workflow_executor
         if isinstance(self.pre_llm_workflow_executor, PreLlmWorkflowExecutor):
@@ -617,10 +617,10 @@ class Agent:
         )
 
         # pre_llm_workflow
-        # system prompt build 이후 ~ enhance 전에 실행
+        #system prompt build 이후 ~ enhance 전에 실행
         workflow_result: Optional[WorkflowFinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
-
+        
         if self.config.enable_pre_llm_workflow and self.pre_llm_workflow_executor:
             try:
                 workflow_input = WorkflowInput(
@@ -660,9 +660,6 @@ class Agent:
                 user_message.metadata["pre_llm_workflow"] = workflow_metadata
                 conversation.metadata["last_pre_llm_workflow"] = workflow_metadata
 
-            # 최종 Pre-LLM UI 출력
-            if workflow_result and workflow_result.ui_component:
-                yield workflow_result.ui_component
 
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
@@ -675,13 +672,11 @@ class Agent:
                     },
                 )
 
-            system_prompt = (
-                await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
-                    system_prompt,
-                    message,
-                    user,
-                    workflow_result,
-                )
+            system_prompt = await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
+                system_prompt,
+                message,
+                user,
+                workflow_result,
             )
 
             if self.observability_provider and enhancement_span:
@@ -714,7 +709,7 @@ class Agent:
             llm_request_metadata["pre_llm_workflow"] = workflow_metadata
 
         request = await self._build_llm_request(
-            conversation,
+            conversation, 
             tool_schemas,
             user,
             system_prompt,
@@ -1491,4 +1486,4 @@ You can:
                         },
                     )
 
-        return response  #
+        return response#

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 from .edge import WorkflowEdge
@@ -14,6 +15,9 @@ from .state import (
     WorkflowStatus,
     apply_node_result,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class PreLlmWorkflowExecutor:
@@ -66,6 +70,16 @@ class PreLlmWorkflowExecutor:
                 attempts = state.retry.increment(current_node_id)
 
                 if attempts <= self.retry_limit:
+                    # A retry may follow an explicitly conditioned edge. Ignore
+                    # unconditional edges so existing nodes keep self-retrying.
+                    retry_edge = await self._select_next_edge(
+                        state,
+                        current_node_id,
+                        result,
+                        require_condition=True,
+                    )
+                    if retry_edge is not None:
+                        current_node_id = retry_edge.target_node_id
                     continue
 
                 return self._finalize(
@@ -110,8 +124,12 @@ class PreLlmWorkflowExecutor:
         state: WorkflowState,
         source_node_id: str,
         last_result: NodeResult,
+        *,
+        require_condition: bool = False,
     ) -> Optional[WorkflowEdge]:
         for edge in self.graph.get_edges(source_node_id):
+            if require_condition and edge.condition is None:
+                continue
             if await edge.matches(state, last_result):
                 return edge
 
@@ -123,20 +141,21 @@ class PreLlmWorkflowExecutor:
         status: WorkflowStatus,
         extra_errors: Optional[List[str]] = None,
     ) -> WorkflowFinalResult:
-        state.final_status = status
-
         errors = list(state.errors)
 
         if extra_errors:
             errors.extend(extra_errors)
 
+        if state.debug_metadata:
+            logger.debug(
+                "Pre-LLM workflow debug metadata",
+                extra={"debug_metadata": state.debug_metadata},
+            )
+
         return WorkflowFinalResult(
             status=status,
             intent=self._extract_intent(state),
             structured_output=state.structured_question,
-            prompt_metadata=dict(state.prompt_metadata),
-            request_metadata=dict(state.request_metadata),
-            debug_metadata=dict(state.debug_metadata),
             errors=errors,
             retry_counts=state.retry_counts,
         )
@@ -149,14 +168,5 @@ class PreLlmWorkflowExecutor:
             intent = state.structured_question.get("intent")
             if isinstance(intent, str):
                 return intent
-
-        for output in state.node_outputs.values():
-            if isinstance(output, dict):
-                intent = output.get("intent")
-                if isinstance(intent, str):
-                    return intent
-
-            if isinstance(output, str) and output in {"general", "sql"}:
-                return output
 
         return None

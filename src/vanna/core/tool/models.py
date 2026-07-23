@@ -6,7 +6,7 @@ This module contains data models for tool execution.
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Import AgentMemory at runtime for Pydantic model resolution
 from vanna.capabilities.agent_memory import AgentMemory
@@ -40,8 +40,7 @@ class ToolContext(BaseModel):
         description="Optional observability provider for metrics and spans",
     )
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ToolResult(BaseModel):

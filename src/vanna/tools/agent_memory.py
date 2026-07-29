@@ -44,7 +44,7 @@ class SearchSavedCorrectToolUsesParams(BaseModel):
         default=10, description="Maximum number of results to return"
     )
     similarity_threshold: Optional[float] = Field(
-        default=0.3, description="Minimum similarity score for results (0.0-1.0)"
+        default=0.7, description="Minimum similarity score for results (0.0-1.0)"
     )
     tool_name_filter: Optional[str] = Field(
         default=None, description="Filter results to specific tool name"

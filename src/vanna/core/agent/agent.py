@@ -623,6 +623,11 @@ class Agent:
 
         if self.config.enable_pre_llm_workflow and self.pre_llm_workflow_executor:
             try:
+                filtered_conversation_history = (
+                    await self._apply_conversation_filters(
+                        conversation.messages[:-1]
+                    )
+                )
                 workflow_input = WorkflowInput(
                     user_id=user.id,
                     conversation_id=conversation_id,
@@ -633,6 +638,13 @@ class Agent:
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,
+                        "conversation_history": [
+                            {
+                                "role": history_message.role,
+                                "content": history_message.content,
+                            }
+                            for history_message in filtered_conversation_history
+                        ],
                     },
                 )
 
@@ -1258,31 +1270,9 @@ You can:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> LlmRequest:
         """Build LLM request from conversation and tools."""
-        # Apply conversation filters with observability
-        filtered_messages = conversation.messages
-        for filter in self.conversation_filters:
-            filter_span = None
-            if self.observability_provider:
-                filter_span = await self.observability_provider.create_span(
-                    "agent.conversation.filter",
-                    attributes={
-                        "filter": filter.__class__.__name__,
-                        "message_count_before": len(filtered_messages),
-                    },
-                )
-
-            filtered_messages = await filter.filter_messages(filtered_messages)
-
-            if self.observability_provider and filter_span:
-                filter_span.set_attribute("message_count_after", len(filtered_messages))
-                await self.observability_provider.end_span(filter_span)
-                if filter_span.duration_ms():
-                    await self.observability_provider.record_metric(
-                        "agent.filter.duration",
-                        filter_span.duration_ms() or 0,
-                        "ms",
-                        tags={"filter": filter.__class__.__name__},
-                    )
+        filtered_messages = await self._apply_conversation_filters(
+            conversation.messages
+        )
 
         messages = []
         for msg in filtered_messages:
@@ -1331,6 +1321,40 @@ You can:
             system_prompt=system_prompt,
             metadata=metadata or {},
         )
+
+    async def _apply_conversation_filters(
+        self,
+        messages: List[Message],
+    ) -> List[Message]:
+        """Apply configured filters without mutating conversation history."""
+        filtered_messages = list(messages)
+        for conversation_filter in self.conversation_filters:
+            filter_span = None
+            if self.observability_provider:
+                filter_span = await self.observability_provider.create_span(
+                    "agent.conversation.filter",
+                    attributes={
+                        "filter": conversation_filter.__class__.__name__,
+                        "message_count_before": len(filtered_messages),
+                    },
+                )
+
+            filtered_messages = await conversation_filter.filter_messages(
+                filtered_messages
+            )
+
+            if self.observability_provider and filter_span:
+                filter_span.set_attribute("message_count_after", len(filtered_messages))
+                await self.observability_provider.end_span(filter_span)
+                if filter_span.duration_ms():
+                    await self.observability_provider.record_metric(
+                        "agent.filter.duration",
+                        filter_span.duration_ms() or 0,
+                        "ms",
+                        tags={"filter": conversation_filter.__class__.__name__},
+                    )
+
+        return filtered_messages
 
     async def _send_llm_request(self, request: LlmRequest) -> LlmResponse:
         """Send LLM request with middleware and observability."""

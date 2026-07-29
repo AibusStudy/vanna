@@ -21,6 +21,7 @@ SRC_PATH = TESTS_PATH.parent / "src"
 sys.path.insert(0, str(SRC_PATH))
 
 from vanna import Agent, AgentConfig
+from vanna.core.filter import ConversationFilter
 from vanna.core.llm import LlmRequest, LlmResponse, LlmService, LlmStreamChunk
 from vanna.core.pre_llm_workflow import (
     NodeResult,
@@ -31,10 +32,12 @@ from vanna.core.pre_llm_workflow import (
     WorkflowState,
 )
 from vanna.core.registry import ToolRegistry
+from vanna.core.storage import Conversation, Message
 from vanna.core.tool import Tool, ToolCall, ToolContext, ToolResult
 from vanna.core.user import User
 from vanna.core.user.request_context import RequestContext
 from vanna.core.user.resolver import UserResolver
+from vanna.integrations.local import MemoryConversationStore
 from vanna.integrations.local.agent_memory import DemoAgentMemory
 
 
@@ -93,6 +96,32 @@ class FailingWorkflowExecutor:
         raise RuntimeError("workflow boom")
 
 
+class RecentTurnsFilter(ConversationFilter):
+    def __init__(self, max_turns: int) -> None:
+        self.max_turns = max_turns
+
+    async def filter_messages(self, messages: List[Message]) -> List[Message]:
+        turns: List[List[Message]] = []
+        current_turn: List[Message] = []
+
+        for message in messages:
+            if message.role == "user":
+                if current_turn:
+                    turns.append(current_turn)
+                current_turn = [message]
+            else:
+                current_turn.append(message)
+
+        if current_turn:
+            turns.append(current_turn)
+
+        return [
+            message
+            for turn in turns[-self.max_turns :]
+            for message in turn
+        ]
+
+
 class FinishWorkflowNode:
     node_id = "finish"
 
@@ -130,23 +159,35 @@ def create_agent(
     pre_llm_workflow_executor: Any = None,
     enable_pre_llm_workflow: bool = True,
     tool_registry: Optional[ToolRegistry] = None,
+    conversation_store: Optional[MemoryConversationStore] = None,
+    conversation_filters: Optional[List[ConversationFilter]] = None,
 ) -> Agent:
     return Agent(
         llm_service=llm_service,
         tool_registry=tool_registry or ToolRegistry(),
         user_resolver=SimpleUserResolver(),
         agent_memory=DemoAgentMemory(max_items=100),
+        conversation_store=conversation_store,
         config=AgentConfig(
             enable_pre_llm_workflow=enable_pre_llm_workflow,
             stream_responses=False,
         ),
         pre_llm_workflow_executor=pre_llm_workflow_executor,
+        conversation_filters=conversation_filters or [],
     )
 
 
-async def drain_agent(agent: Agent, message: str = "Show sales by day") -> None:
+async def drain_agent(
+    agent: Agent,
+    message: str = "Show sales by day",
+    conversation_id: Optional[str] = None,
+) -> None:
     request_context = RequestContext(cookies={}, headers={})
-    async for _component in agent.send_message(request_context, message):
+    async for _component in agent.send_message(
+        request_context,
+        message,
+        conversation_id=conversation_id,
+    ):
         pass
 
 
@@ -163,6 +204,7 @@ async def test_agent_attaches_pre_llm_workflow_metadata_to_llm_request() -> None
 
     assert len(workflow_executor.inputs) == 1
     assert workflow_executor.inputs[0].original_message == "Show sales by day"
+    assert workflow_executor.inputs[0].metadata["conversation_history"] == []
     assert len(llm.requests) == 1
 
     metadata = llm.requests[0].metadata["pre_llm_workflow"]
@@ -176,6 +218,68 @@ async def test_agent_attaches_pre_llm_workflow_metadata_to_llm_request() -> None
         "errors",
         "retry_counts",
     }
+
+
+@pytest.mark.asyncio
+async def test_agent_passes_filtered_previous_turns_to_pre_llm_workflow() -> None:
+    llm = RecordingLlmService()
+    workflow_executor = StaticWorkflowExecutor()
+    conversation_store = MemoryConversationStore()
+    conversation_id = "existing-conversation"
+    user = User(
+        id="test_user",
+        email="test@example.com",
+        group_memberships=["user"],
+    )
+    original_messages: List[Message] = []
+    for turn_number in range(1, 7):
+        original_messages.extend(
+            [
+                Message(role="user", content=f"user-{turn_number}"),
+                Message(role="assistant", content=f"assistant-{turn_number}"),
+            ]
+        )
+    original_messages.append(Message(role="tool", content="tool-from-turn-6"))
+    await conversation_store.update_conversation(
+        Conversation(
+            id=conversation_id,
+            user=user,
+            messages=list(original_messages),
+        )
+    )
+
+    agent = create_agent(
+        llm_service=llm,
+        pre_llm_workflow_executor=workflow_executor,
+        conversation_store=conversation_store,
+        conversation_filters=[RecentTurnsFilter(max_turns=5)],
+    )
+
+    await drain_agent(
+        agent,
+        message="current-question",
+        conversation_id=conversation_id,
+    )
+
+    history = workflow_executor.inputs[0].metadata["conversation_history"]
+    assert history == [
+        {"role": message.role, "content": message.content}
+        for message in original_messages[2:]
+    ]
+    assert all(item["content"] != "current-question" for item in history)
+
+    assert [message.content for message in llm.requests[0].messages] == [
+        message.content for message in original_messages[4:]
+    ] + ["current-question"]
+
+    stored_conversation = await conversation_store.get_conversation(
+        conversation_id,
+        user,
+    )
+    assert stored_conversation is not None
+    assert [message.content for message in stored_conversation.messages[:13]] == [
+        message.content for message in original_messages
+    ]
 
 
 @pytest.mark.asyncio

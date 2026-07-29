@@ -140,7 +140,7 @@ class SearchSavedCorrectToolUsesTool(Tool[SearchSavedCorrectToolUsesParams]):
                 question=args.question,
                 context=context,
                 limit=args.limit or 10,
-                similarity_threshold=args.similarity_threshold or 0.5,
+                similarity_threshold=args.similarity_threshold or 0.0,
                 tool_name_filter=args.tool_name_filter,
             )
 

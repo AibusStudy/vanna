@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent implementation for the Vanna Agents framework.
 
 This module provides the main Agent class that orchestrates the interaction
@@ -31,6 +31,8 @@ from vanna.core.registry import ToolRegistry
 from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.core.lifecycle import LifecycleHook
 from vanna.core.middleware import LlmMiddleware
+from vanna.core.main_workflow.state import MainWorkflowInput
+from vanna.core.main_workflow.excutor import MainWorkflowExecutor
 from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
 from vanna.core.pre_llm_workflow import (
     PreLlmWorkflowExecutor,
@@ -102,6 +104,8 @@ class Agent:
         conversation_filters: List[ConversationFilter] = [],
         observability_provider: Optional[ObservabilityProvider] = None,
         audit_logger: Optional[AuditLogger] = None,
+        main_workflow_executor: Optional[MainWorkflowExecutor] = None,
+        main_workflow_excutor: Optional[MainWorkflowExecutor] = None,
         pre_llm_workflow_executor: Optional[PreLlmWorkflowExecutor] = None,
     ):
         self.llm_service = llm_service
@@ -137,6 +141,7 @@ class Agent:
         self.conversation_filters = conversation_filters
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
+        self.main_workflow_executor = main_workflow_executor or main_workflow_excutor
 
         # pre_llm_workflow 관련 agent.config.py 적용 부분
         # max_steps와 retry_limit 적용
@@ -616,25 +621,28 @@ class Agent:
             user, tool_schemas
         )
 
-        # pre_llm_workflow
+        # main_workflow / pre_llm_workflow
         # system prompt build 이후 ~ enhance 전에 실행
         workflow_result: Optional[WorkflowFinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
+        main_workflow_turn_state = None
+        main_workflow_metadata: Optional[Dict[str, Any]] = None
 
-        if self.config.enable_pre_llm_workflow and self.pre_llm_workflow_executor:
+        if self.main_workflow_executor:
             try:
                 filtered_conversation_history = (
                     await self._apply_conversation_filters(
                         conversation.messages[:-1]
                     )
                 )
-                workflow_input = WorkflowInput(
+                main_workflow_input = MainWorkflowInput(
                     user_id=user.id,
                     conversation_id=conversation_id,
                     request_id=request_id,
                     original_message=message,
                     system_prompt=system_prompt,
-                    tool_names=[tool.name for tool in tool_schemas],
+                    tool_schemas=tool_schemas,
+                    tool_context=context,
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,
@@ -648,33 +656,31 @@ class Agent:
                     },
                 )
 
-                workflow_result = await self.pre_llm_workflow_executor.run(
-                    workflow_input
+                main_workflow_turn_state = await self.main_workflow_executor.run(
+                    main_workflow_input
                 )
-                workflow_metadata = workflow_result.to_metadata()
+                main_workflow_metadata = main_workflow_turn_state.to_metadata()
 
             except Exception as e:
-                workflow_result = WorkflowFinalResult(
-                    status="failed",
-                    errors=[f"Pre-LLM workflow failed: {str(e)}"],
-                )
-                workflow_metadata = workflow_result.to_metadata()
+                main_workflow_metadata = {
+                    "status": "failed",
+                    "errors": [f"Main workflow failed: {str(e)}"],
+                }
 
-            if self.config.attach_pre_llm_workflow_metadata and workflow_metadata:
-                context.metadata["pre_llm_workflow"] = workflow_metadata
+            if main_workflow_metadata is not None:
+                context.metadata["main_workflow"] = main_workflow_metadata
 
-                if workflow_result.structured_output:
-                    context.metadata["structured_question"] = (
-                        workflow_result.structured_output
-                    )
+            if main_workflow_turn_state is not None:
+                workflow_metadata = main_workflow_turn_state.pre_llm_workflow
+                if workflow_metadata:
+                    context.metadata["pre_llm_workflow"] = workflow_metadata
 
-            if self.config.persist_pre_llm_workflow_metadata and workflow_metadata:
-                user_message.metadata["pre_llm_workflow"] = workflow_metadata
-                conversation.metadata["last_pre_llm_workflow"] = workflow_metadata
+                # MainWorkflow owns turn/subworkflow state only.
+                # The existing Agent LLM/tool loop below remains responsible for
+                # producing the final assistant response.
 
-            # 최종 Pre-LLM UI 출력
-            if workflow_result and workflow_result.ui_component:
-                yield workflow_result.ui_component
+        # pre_llm_workflow is executed inside MainWorkflowExecutor.
+        # Agent no longer runs it as a separate branch.
 
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
@@ -724,6 +730,8 @@ class Agent:
             and workflow_metadata is not None
         ):
             llm_request_metadata["pre_llm_workflow"] = workflow_metadata
+        if main_workflow_metadata is not None:
+            llm_request_metadata["main_workflow"] = main_workflow_metadata
 
         request = await self._build_llm_request(
             conversation,
@@ -1523,3 +1531,4 @@ You can:
                     )
 
         return response  #
+

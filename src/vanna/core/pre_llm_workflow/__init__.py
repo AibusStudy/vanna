@@ -17,7 +17,7 @@ from .state import (
     NodeResult,
     NodeStatus,
     RetryState,
-    QuestionUnderstandSubWorkflowFinalResult,
+    WorkflowFinalResult,
     WorkflowInput,
     WorkflowState,
     WorkflowStatus,

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from ..user.models import User
     from ..llm.models import LlmMessage
-    from ..pre_llm_workflow import WorkflowFinalResult
+    from ..question_understanding_subworkflow import QuestUnderstand_FinalResult
 
 
 class LlmContextEnhancer(ABC):
@@ -99,7 +99,7 @@ class LlmContextEnhancer(ABC):
         system_prompt: str,
         user_message: str,
         user: "User",
-        workflow_result: Optional["WorkflowFinalResult"] = None,
+        workflow_result: Optional["QuestUnderstand_FinalResult"] = None,
     ) -> str:
         return await self.enhance_system_prompt(
             system_prompt,

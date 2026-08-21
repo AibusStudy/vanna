@@ -1,4 +1,4 @@
-"""Pre-LLM workflow primitives for enriching an Agent request before the first LLM call.
+"""Question-Understanding workflow primitives for enriching an Agent request before the first LLM call.
 
 This package does not handle slash-command workflows or post-LLM tool execution.
 """
@@ -14,12 +14,12 @@ from .protocols import (
     TimeNormalizer,
 )
 from .state import (
-    NodeResult,
+    QuestUnderstand_NodeResult,
     NodeStatus,
-    RetryState,
-    WorkflowFinalResult,
-    WorkflowInput,
-    WorkflowState,
+    QuestUnderstand_RetryState,
+    QuestUnderstand_FinalResult,
+    QuestUnderstand_Input,
+    QuestUnderstand_State,
     WorkflowStatus,
     apply_node_result,
 )
@@ -27,20 +27,20 @@ from .state import (
 __all__ = [
     "EdgeCondition",
     "IntentClassifier",
-    "NodeResult",
+    "QuestUnderstand_NodeResult",
     "NodeStatus",
     "PreLlmWorkflowExecutor",
     "QuestionStructurer",
-    "RetryState",
+    "QuestUnderstand_RetryState",
     "StructuredQuestionValidator",
     "TimeNormalizer",
     "WorkflowEdge",
-    "WorkflowFinalResult",
+    "QuestUnderstand_FinalResult",
     "WorkflowGraph",
     "WorkflowGraphError",
-    "WorkflowInput",
+    "QuestUnderstand_Input",
     "WorkflowNode",
-    "WorkflowState",
+    "QuestUnderstand_State",
     "WorkflowStatus",
     "apply_node_result",
 ]

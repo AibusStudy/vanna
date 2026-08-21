@@ -1,11 +1,11 @@
-"""Edge contracts for pre-LLM workflow graphs."""
+"""Edge contracts for Question-Understanding workflow graphs."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
-from .state import NodeResult, WorkflowState
+from .state import QuestUnderstand_NodeResult, QuestUnderstand_State
 
 
 @runtime_checkable
@@ -14,8 +14,8 @@ class EdgeCondition(Protocol):
 
     async def evaluate(
         self,
-        state: WorkflowState,
-        last_node_result: NodeResult,
+        state: QuestUnderstand_State,
+        last_node_result: QuestUnderstand_NodeResult,
     ) -> bool:
         """Return True when this edge should be selected."""
         ...
@@ -32,8 +32,8 @@ class WorkflowEdge:
 
     async def matches(
         self,
-        state: WorkflowState,
-        last_node_result: NodeResult,
+        state: QuestUnderstand_State,
+        last_node_result: QuestUnderstand_NodeResult,
     ) -> bool:
         if self.condition is None:
             return True

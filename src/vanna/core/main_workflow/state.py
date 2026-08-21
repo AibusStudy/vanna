@@ -8,7 +8,7 @@ from vanna.core.tool import ToolContext, ToolSchema
 
 MainWorkflowStatus = Literal["success", "failed", "skipped"]
 MainWorkflowStage = Literal[
-    "pre_llm_workflow",
+    "question_understanding_subworkflow",
     "data_discovery",
     "sql_processing",
     "final",
@@ -90,19 +90,19 @@ class MainWorkflowInput:
 class MainWorkflowTurnState:
     turn_id: str
     original_question: str
-    stage: MainWorkflowStage = "pre_llm_workflow"
+    stage: MainWorkflowStage = "question_understanding_subworkflow"
     operation: str | None = None
     fallback_state: FallbackState = field(default_factory=FallbackState)
 
     subworkflows: dict[str, SubworkflowState] = field(
         default_factory=lambda: {
-            "pre_llm_workflow": SubworkflowState(),
+            "question_understanding_subworkflow": SubworkflowState(),
             "data_discovery": SubworkflowState(),
             "sql_processing": SubworkflowState(),
         }
     )
 
-    pre_llm_workflow: dict[str, Any] | None = None
+    question_understanding_subworkflow: dict[str, Any] | None = None
     data_discovery: dict[str, Any] | None = None
     sql_processing: dict[str, Any] | None = None
 
@@ -134,7 +134,7 @@ class MainWorkflowTurnState:
                 name: subworkflow.to_metadata()
                 for name, subworkflow in self.subworkflows.items()
             },
-            "pre_llm_workflow": self.pre_llm_workflow,
+            "question_understanding_subworkflow": self.question_understanding_subworkflow,
             "data_discovery": self.data_discovery,
             "sql_processing": self.sql_processing,
             "result": dict(self.result),

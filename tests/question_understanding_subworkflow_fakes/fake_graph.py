@@ -1,8 +1,8 @@
-"""Fake graph factory for local pre-LLM workflow smoke tests."""
+"""Fake graph factory for local Question-Understanding workflow smoke tests."""
 
 from __future__ import annotations
 
-from vanna.core.pre_llm_workflow import WorkflowGraph
+from vanna.core.question_understanding_subworkflow import WorkflowGraph
 
 from .fake_nodes import (
     FakeGeneralFinishNode,

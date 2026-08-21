@@ -1,4 +1,4 @@
-"""Executor for pre-LLM workflow graphs."""
+"""Executor for Question-Understanding workflow graphs."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from typing import List, Optional
 from .edge import WorkflowEdge
 from .graph import WorkflowGraph
 from .state import (
-    NodeResult,
-    WorkflowFinalResult,
-    WorkflowInput,
-    WorkflowState,
+    QuestUnderstand_NodeResult,
+    QuestUnderstand_FinalResult,
+    QuestUnderstand_Input,
+    QuestUnderstand_State,
     WorkflowStatus,
     apply_node_result,
 )
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class PreLlmWorkflowExecutor:
-    """Runs a pre-LLM workflow graph from the start node to a final result."""
+    """Runs a Question-Understanding workflow graph from the start node to a final result."""
 
     def __init__(
         self,
@@ -39,10 +39,10 @@ class PreLlmWorkflowExecutor:
         self.max_steps = max_steps
         self.retry_limit = retry_limit
 
-    async def run(self, workflow_input: WorkflowInput) -> WorkflowFinalResult:
+    async def run(self, workflow_input: QuestUnderstand_Input) -> QuestUnderstand_FinalResult:
         self.graph.validate()
 
-        state = WorkflowState(input=workflow_input)
+        state = QuestUnderstand_State(input=workflow_input)
         current_node_id = self.graph.start_node_id
 
         if current_node_id is None:
@@ -119,9 +119,9 @@ class PreLlmWorkflowExecutor:
 
     async def _select_next_edge(
         self,
-        state: WorkflowState,
+        state: QuestUnderstand_State,
         source_node_id: str,
-        last_result: NodeResult,
+        last_result: QuestUnderstand_NodeResult,
         *,
         require_condition: bool = False,
     ) -> Optional[WorkflowEdge]:
@@ -135,10 +135,10 @@ class PreLlmWorkflowExecutor:
 
     def _finalize(
         self,
-        state: WorkflowState,
+        state: QuestUnderstand_State,
         status: WorkflowStatus,
         extra_errors: Optional[List[str]] = None,
-    ) -> WorkflowFinalResult:
+    ) -> QuestUnderstand_FinalResult:
         errors = list(state.errors)
 
         if extra_errors:
@@ -146,11 +146,11 @@ class PreLlmWorkflowExecutor:
 
         if state.debug_metadata:
             logger.debug(
-                "Pre-LLM workflow debug metadata",
+                "Question-Understanding workflow debug metadata",
                 extra={"debug_metadata": state.debug_metadata},
             )
 
-        return WorkflowFinalResult(
+        return QuestUnderstand_FinalResult(
             status=status,
             intent=self._extract_intent(state),
             structured_output=state.structured_question,
@@ -158,7 +158,7 @@ class PreLlmWorkflowExecutor:
             retry_counts=state.retry_counts,
         )
 
-    def _extract_intent(self, state: WorkflowState) -> Optional[str]:
+    def _extract_intent(self, state: QuestUnderstand_State) -> Optional[str]:
         if state.routing_intent:
             return state.routing_intent
 

@@ -35,10 +35,10 @@ from vanna.core.middleware import LlmMiddleware
 from vanna.core.main_workflow.state import MainWorkflowInput
 from vanna.core.main_workflow.excutor import MainWorkflowExecutor
 from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
-from vanna.core.pre_llm_workflow import (
+from vanna.core.question_understanding_subworkflow import (
     PreLlmWorkflowExecutor,
-    WorkflowFinalResult,
-    WorkflowInput,
+    QuestUnderstand_FinalResult,
+    QuestUnderstand_Input,
 )
 from vanna.core.recovery import ErrorRecoveryStrategy, RecoveryActionType
 from vanna.core.enricher import ToolContextEnricher
@@ -107,7 +107,7 @@ class Agent:
         audit_logger: Optional[AuditLogger] = None,
         main_workflow_executor: Optional[MainWorkflowExecutor] = None,
         main_workflow_excutor: Optional[MainWorkflowExecutor] = None,
-        pre_llm_workflow_executor: Optional[PreLlmWorkflowExecutor] = None,
+        question_understanding_subworkflow_executor: Optional[PreLlmWorkflowExecutor] = None,
     ):
         self.llm_service = llm_service
         self.tool_registry = tool_registry
@@ -144,12 +144,12 @@ class Agent:
         self.audit_logger = audit_logger
         self.main_workflow_executor = main_workflow_executor or main_workflow_excutor
 
-        # pre_llm_workflow 관련 agent.config.py 적용 부분
+        # question_understanding_subworkflow 관련 agent.config.py 적용 부분
         # max_steps와 retry_limit 적용
-        self.pre_llm_workflow_executor = pre_llm_workflow_executor
-        if isinstance(self.pre_llm_workflow_executor, PreLlmWorkflowExecutor):
-            self.pre_llm_workflow_executor.max_steps = self.config.max_workflow_steps
-            self.pre_llm_workflow_executor.retry_limit = (
+        self.question_understanding_subworkflow_executor = question_understanding_subworkflow_executor
+        if isinstance(self.question_understanding_subworkflow_executor, PreLlmWorkflowExecutor):
+            self.question_understanding_subworkflow_executor.max_steps = self.config.max_workflow_steps
+            self.question_understanding_subworkflow_executor.retry_limit = (
                 self.config.workflow_retry_limit
             )
 
@@ -622,9 +622,9 @@ class Agent:
             user, tool_schemas
         )
 
-        # main_workflow / pre_llm_workflow
+        # main_workflow / question_understanding_subworkflow
         # system prompt build 이후 ~ enhance 전에 실행
-        workflow_result: Optional[WorkflowFinalResult] = None
+        workflow_result: Optional[QuestUnderstand_FinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
         main_workflow_turn_state = None
         main_workflow_metadata: Optional[Dict[str, Any]] = None
@@ -689,15 +689,15 @@ class Agent:
                 )
 
             if main_workflow_turn_state is not None:
-                workflow_metadata = main_workflow_turn_state.pre_llm_workflow
+                workflow_metadata = main_workflow_turn_state.question_understanding_subworkflow
                 if workflow_metadata:
-                    context.metadata["pre_llm_workflow"] = workflow_metadata
+                    context.metadata["question_understanding_subworkflow"] = workflow_metadata
 
                 # MainWorkflow owns turn/subworkflow state only.
                 # The existing Agent LLM/tool loop below remains responsible for
                 # producing the final assistant response.
 
-        # pre_llm_workflow is executed inside MainWorkflowExecutor.
+        # question_understanding_subworkflow는 MainWorkflowExecutor 내부에서 실행된다.
         # Agent no longer runs it as a separate branch.
 
         # Enhance system prompt with LLM context enhancer
@@ -741,13 +741,13 @@ class Agent:
                 )
 
         # Build LLM request
-        # pre_llm_workflow의 결과를 toolContext와 LlmRequest.metadata에 붙일지 결정
+        # question_understanding_subworkflow의 결과를 toolContext와 LlmRequest.metadata에 붙일지 결정
         llm_request_metadata: Dict[str, Any] = {}
         if (
-            self.config.attach_pre_llm_workflow_metadata
+            self.config.attach_question_understanding_subworkflow_metadata
             and workflow_metadata is not None
         ):
-            llm_request_metadata["pre_llm_workflow"] = workflow_metadata
+            llm_request_metadata["question_understanding_subworkflow"] = workflow_metadata
         if main_workflow_metadata is not None:
             llm_request_metadata["main_workflow"] = main_workflow_metadata
 

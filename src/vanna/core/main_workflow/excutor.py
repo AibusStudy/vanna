@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from vanna.core.pre_llm_workflow import WorkflowInput
+from vanna.core.question_understanding_subworkflow import QuestUnderstand_Input
 
 from .state import MainWorkflowInput, MainWorkflowTurnState
 
@@ -22,7 +22,7 @@ def _log_turn_state(event: str, state: MainWorkflowTurnState) -> None:
 
 
 class MainWorkflowExecutor:
-    """Runs pre-LLM/data-discovery subflows and stores their turn state.
+    """Runs Question-Understanding/data-discovery subflows and stores their turn state.
 
     The Agent still owns the final LLM/tool-calling loop. This executor prepares
     and records the state that the enhancer and the LLM request can consume.
@@ -34,10 +34,10 @@ class MainWorkflowExecutor:
         #data_discovery_executor=None,
         #sql_processing_executor=None,
         router=None,
-        pre_llm_workflow_executor=None,
+        question_understanding_subworkflow_executor=None,
     ):
         self.question_understanding_executor = (
-            question_understanding_executor or pre_llm_workflow_executor
+            question_understanding_executor or question_understanding_subworkflow_executor
         )
         #self.data_discovery_executor = data_discovery_executor
         #self.sql_processing_executor = sql_processing_executor
@@ -50,8 +50,8 @@ class MainWorkflowExecutor:
         )
         _log_turn_state("initialized", state)
 
-        await self._run_pre_llm_workflow(input, state)
-        _log_turn_state("pre_llm_workflow_saved", state)
+        await self._run_question_understanding_subworkflow(input, state)
+        _log_turn_state("question_understanding_subworkflow_saved", state)
         await self._run_data_discovery(input, state)
         _log_turn_state("data_discovery_saved", state)
 
@@ -61,21 +61,21 @@ class MainWorkflowExecutor:
         _log_turn_state("sql_processing_ready", state)
         return state
 
-    async def _run_pre_llm_workflow(
+    async def _run_question_understanding_subworkflow(
         self,
         input: MainWorkflowInput,
         state: MainWorkflowTurnState,
     ) -> None:
-        subflow_state = state.subworkflow("pre_llm_workflow")
-        state.stage = "pre_llm_workflow"
-        state.operation = "run_pre_llm_workflow"
+        subflow_state = state.subworkflow("question_understanding_subworkflow")
+        state.stage = "question_understanding_subworkflow"
+        state.operation = "run_question_understanding_subworkflow"
 
         if self.question_understanding_executor is None:
             subflow_state.status = "skipped"
             return
 
         try:
-            workflow_input = WorkflowInput(
+            workflow_input = QuestUnderstand_Input(
                 user_id=input.user_id,
                 conversation_id=input.conversation_id,
                 request_id=input.request_id,
@@ -88,19 +88,19 @@ class MainWorkflowExecutor:
                 },
             )
             result = await self.question_understanding_executor.run(workflow_input)
-            state.pre_llm_workflow = result.to_metadata()
-            _log_turn_state("pre_llm_workflow_result_assigned", state)
+            state.question_understanding_subworkflow = result.to_metadata()
+            _log_turn_state("question_understanding_subworkflow_result_assigned", state)
             subflow_state.status = result.status
             subflow_state.errors = list(result.errors)
             subflow_state.retry_counts = dict(result.retry_counts)
         except Exception as exc:
             subflow_state.status = "failed"
             subflow_state.errors.append(str(exc))
-            state.pre_llm_workflow = {
+            state.question_understanding_subworkflow = {
                 "status": "failed",
-                "errors": [f"pre_llm_workflow failed: {str(exc)}"],
+                "errors": [f"question_understanding_subworkflow failed: {str(exc)}"],
             }
-            _log_turn_state("pre_llm_workflow_error_assigned", state)
+            _log_turn_state("question_understanding_subworkflow_error_assigned", state)
 
     async def _run_data_discovery(
         self,

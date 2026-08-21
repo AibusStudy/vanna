@@ -1,4 +1,4 @@
-"""Graph container for pre-LLM workflow nodes and edges."""
+"""Graph container for Question-Understanding workflow nodes and edges."""
 
 from __future__ import annotations
 from collections import defaultdict, deque
@@ -9,7 +9,7 @@ from .node import WorkflowNode
 
 
 class WorkflowGraphError(ValueError):
-    """Raised when a pre-LLM workflow graph is invalid."""
+    """Raised when a Question-Understanding workflow graph is invalid."""
 
 
 class WorkflowGraph:

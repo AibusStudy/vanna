@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from vanna.core.question_understanding_subworkflow import QuestUnderstand_Input
+from vanna.core.data_discovering_subworkflow import DataDiscover_Input
 
 from .state import MainWorkflowInput, MainWorkflowTurnState
 
@@ -31,15 +32,13 @@ class MainWorkflowExecutor:
     def __init__(
         self,
         question_understanding_executor=None,
-        #data_discovery_executor=None,
+        data_discovery_executor=None,
         #sql_processing_executor=None,
         router=None,
         question_understanding_subworkflow_executor=None,
     ):
-        self.question_understanding_executor = (
-            question_understanding_executor or question_understanding_subworkflow_executor
-        )
-        #self.data_discovery_executor = data_discovery_executor
+        self.question_understanding_executor = question_understanding_executor
+        self.data_discovery_executor = data_discovery_executor
         #self.sql_processing_executor = sql_processing_executor
         self.router = router
 
@@ -104,9 +103,10 @@ class MainWorkflowExecutor:
 
     async def _run_data_discovery(
         self,
-        input: MainWorkflowInput,
+        question_result: DataDiscover_Input,
         state: MainWorkflowTurnState,
     ) -> None:
+        question_result = state.question_understanding_subworkflow
         subflow_state = state.subworkflow("data_discovery")
         state.stage = "data_discovery"
         state.operation = "run_data_discovery"
@@ -116,7 +116,14 @@ class MainWorkflowExecutor:
             return
 
         try:
-            result = await self.data_discovery_executor.run(input, state)
+            workflow_input = DataDiscover_Input(
+                status=question_result.get("status"),
+                intent=question_result.get("intent"),
+                structured_output=question_result.get("structured_output"),
+                errors=question_result.get("errors", []),
+                retry_counts=question_result.get("retry_counts", {}),
+            )
+            result = await self.data_discovery_executor.run(workflow_input)
             state.data_discovery = self._to_metadata(result)
             _log_turn_state("data_discovery_result_assigned", state)
             subflow_state.status = getattr(result, "status", "success")

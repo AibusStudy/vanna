@@ -5,6 +5,7 @@ This module provides the main Agent class that orchestrates the interaction
 between LLM services, tools, and conversation storage.
 """
 
+import json
 import traceback
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
@@ -660,15 +661,32 @@ class Agent:
                     main_workflow_input
                 )
                 main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                logger.info(
+                    "[agent.main_workflow] turn_state_saved\n%s",
+                    json.dumps(
+                        main_workflow_metadata,
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                )
 
             except Exception as e:
                 main_workflow_metadata = {
                     "status": "failed",
                     "errors": [f"Main workflow failed: {str(e)}"],
                 }
+                logger.exception("[agent.main_workflow] failed")
 
             if main_workflow_metadata is not None:
                 context.metadata["main_workflow"] = main_workflow_metadata
+                logger.info(
+                    "[agent.main_workflow] context_metadata_saved\n%s",
+                    json.dumps(
+                        context.metadata["main_workflow"],
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                )
 
             if main_workflow_turn_state is not None:
                 workflow_metadata = main_workflow_turn_state.pre_llm_workflow

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -10,6 +11,14 @@ from vanna.core.pre_llm_workflow import WorkflowInput
 from .state import MainWorkflowInput, MainWorkflowTurnState
 
 logger = logging.getLogger(__name__)
+
+
+def _log_turn_state(event: str, state: MainWorkflowTurnState) -> None:
+    logger.info(
+        "[main_workflow.turn_state] %s\n%s",
+        event,
+        json.dumps(state.to_metadata(), ensure_ascii=False, indent=2),
+    )
 
 
 class MainWorkflowExecutor:
@@ -39,13 +48,17 @@ class MainWorkflowExecutor:
             turn_id=input.request_id,
             original_question=input.original_message,
         )
+        _log_turn_state("initialized", state)
 
         await self._run_pre_llm_workflow(input, state)
+        _log_turn_state("pre_llm_workflow_saved", state)
         await self._run_data_discovery(input, state)
+        _log_turn_state("data_discovery_saved", state)
 
         # sql_processing is handled by Agent's existing LLM/tool-calling loop.
         state.stage = "sql_processing"
         state.operation = "agent_llm_tool_loop_ready"
+        _log_turn_state("sql_processing_ready", state)
         return state
 
     async def _run_pre_llm_workflow(
@@ -76,6 +89,7 @@ class MainWorkflowExecutor:
             )
             result = await self.question_understanding_executor.run(workflow_input)
             state.pre_llm_workflow = result.to_metadata()
+            _log_turn_state("pre_llm_workflow_result_assigned", state)
             subflow_state.status = result.status
             subflow_state.errors = list(result.errors)
             subflow_state.retry_counts = dict(result.retry_counts)
@@ -86,6 +100,7 @@ class MainWorkflowExecutor:
                 "status": "failed",
                 "errors": [f"pre_llm_workflow failed: {str(exc)}"],
             }
+            _log_turn_state("pre_llm_workflow_error_assigned", state)
 
     async def _run_data_discovery(
         self,
@@ -103,6 +118,7 @@ class MainWorkflowExecutor:
         try:
             result = await self.data_discovery_executor.run(input, state)
             state.data_discovery = self._to_metadata(result)
+            _log_turn_state("data_discovery_result_assigned", state)
             subflow_state.status = getattr(result, "status", "success")
             subflow_state.errors = list(getattr(result, "errors", []))
             subflow_state.retry_counts = dict(getattr(result, "retry_counts", {}))
@@ -113,6 +129,7 @@ class MainWorkflowExecutor:
                 "status": "failed",
                 "errors": [f"data_discovery failed: {str(exc)}"],
             }
+            _log_turn_state("data_discovery_error_assigned", state)
 
     @staticmethod
     def _to_metadata(result: Any) -> dict[str, Any]:

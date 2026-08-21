@@ -4,7 +4,7 @@ This package does not handle slash-command workflows or post-LLM tool execution.
 """
 
 from .edge import EdgeCondition, WorkflowEdge
-from .executor import PreLlmWorkflowExecutor
+from .executor import QuestionUnderstandSubWorkflowExecutor
 from .graph import WorkflowGraph, WorkflowGraphError
 from .node import WorkflowNode
 from .protocols import (
@@ -29,7 +29,7 @@ __all__ = [
     "IntentClassifier",
     "QuestUnderstand_NodeResult",
     "NodeStatus",
-    "PreLlmWorkflowExecutor",
+    "QuestionUnderstandSubWorkflowExecutor",
     "QuestionStructurer",
     "QuestUnderstand_RetryState",
     "StructuredQuestionValidator",

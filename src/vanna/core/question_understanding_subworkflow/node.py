@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
-
 from .state import QuestUnderstand_NodeResult, QuestUnderstand_State
 
 
 @runtime_checkable
-class WorkflowNode(Protocol):
+class QuestionUnderstand_Node(Protocol):
     """Executable unit in a Question-Understanding workflow graph.
 
     A node reads QuestUnderstand_State and returns a QuestUnderstand_NodeResult containing only the

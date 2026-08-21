@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from .edge import WorkflowEdge
+from .edge import QuestionUnderstand_Edge
 from .graph import WorkflowGraph
 from .state import (
     QuestUnderstand_NodeResult,
@@ -19,14 +19,14 @@ from .state import (
 logger = logging.getLogger(__name__)
 
 
-class PreLlmWorkflowExecutor:
+class QuestionUnderstandSubWorkflowExecutor:
     """Runs a Question-Understanding workflow graph from the start node to a final result."""
 
     def __init__(
         self,
         graph: WorkflowGraph,
         *,
-        max_steps: int = 10,
+        max_steps: int = 9,
         retry_limit: int = 1,
     ) -> None:
         if max_steps <= 0:
@@ -124,7 +124,7 @@ class PreLlmWorkflowExecutor:
         last_result: QuestUnderstand_NodeResult,
         *,
         require_condition: bool = False,
-    ) -> Optional[WorkflowEdge]:
+    ) -> Optional[QuestionUnderstand_Edge]:
         for edge in self.graph.get_edges(source_node_id):
             if require_condition and edge.condition is None:
                 continue

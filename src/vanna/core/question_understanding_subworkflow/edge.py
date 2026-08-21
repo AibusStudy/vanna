@@ -22,7 +22,7 @@ class EdgeCondition(Protocol):
 
 
 @dataclass(frozen=True)
-class WorkflowEdge:
+class QuestionUnderstand_Edge:
     """Directed edge between two workflow nodes."""
 
     source_node_id: str

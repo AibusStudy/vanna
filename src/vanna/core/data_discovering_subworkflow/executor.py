@@ -1,4 +1,4 @@
-"""Executor for Question-Understanding workflow graphs."""
+"""Executor for Data-Discovering workflow graphs."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from typing import List, Optional
 from .edge import DataDiscover_Edge
 from .graph import WorkflowGraph
 from .state import (
-    DataDiscover_State,
-    DataDiscover_Input,
     DataDiscover_FinalResult,
+    DataDiscover_Input,
     DataDiscover_NodeResult,
+    DataDiscover_State,
     WorkflowStatus,
     apply_node_result,
 )
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class DataDiscoverSubWorkflowExecutor:
-    """Runs a Question-Understanding workflow graph from the start node to a final result."""
+    """Runs metadata and few-shot discovery nodes before the Agent LLM loop."""
 
     def __init__(
         self,
@@ -31,7 +31,6 @@ class DataDiscoverSubWorkflowExecutor:
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps must be greater than 0.")
-
         if retry_limit < 0:
             raise ValueError("retry_limit must be greater than or equal to 0.")
 
@@ -53,7 +52,7 @@ class DataDiscoverSubWorkflowExecutor:
             )
 
         for _ in range(self.max_steps):
-            state.visited_nodes.append(current_node_id)
+            state.set_node_output("current_node", current_node_id)
 
             node = self.graph.get_node(current_node_id)
             result = await node.run(state)
@@ -67,9 +66,7 @@ class DataDiscoverSubWorkflowExecutor:
 
             if result.status == "retry":
                 attempts = state.retry.increment(current_node_id)
-
                 if attempts <= self.retry_limit:
-                    # conditional edge에 따른 node 이동
                     retry_edge = await self._select_next_edge(
                         state,
                         current_node_id,
@@ -99,7 +96,6 @@ class DataDiscoverSubWorkflowExecutor:
             if current_node_id in self.graph.end_node_ids:
                 if result.status == "failed":
                     return self._finalize(state, "failed")
-
                 return self._finalize(state, "success")
 
             if result.status == "failed":
@@ -130,7 +126,6 @@ class DataDiscoverSubWorkflowExecutor:
                 continue
             if await edge.matches(state, last_result):
                 return edge
-
         return None
 
     def _finalize(
@@ -140,31 +135,32 @@ class DataDiscoverSubWorkflowExecutor:
         extra_errors: Optional[List[str]] = None,
     ) -> DataDiscover_FinalResult:
         errors = list(state.errors)
-
         if extra_errors:
             errors.extend(extra_errors)
+        final_status = "failed" if status == "success" and errors and state.metadata_output is None else status
 
-        if state.debug_metadata:
-            logger.debug(
-                "Question-Understanding workflow debug metadata",
-                extra={"debug_metadata": state.debug_metadata},
-            )
-
-        return DataDiscover_FinalResult(
-            status=status,
-            intent=self._extract_intent(state),
-            structured_output=state.structured_question,
-            errors=errors,
-            retry_counts=state.retry_counts,
+        logger.debug(
+            "Data-Discovering workflow finalized",
+            extra={
+                "status": final_status,
+                "warnings": state.warnings,
+                "errors": errors,
+                "retry_counts": state.retry_counts,
+            },
         )
 
-    def _extract_intent(self, state: DataDiscover_State) -> Optional[str]:
-        if state.routing_intent:
-            return state.routing_intent
+        return DataDiscover_FinalResult(
+            status=final_status,
+            metadata_output=state.metadata_output,
+            fewshot_output=state.fewshot_output,
+            warnings=list(state.warnings),
+            errors=errors,
+            retry_counts=state.retry_counts,
+            failed_node_id=state.failed_node_id,
+            failure_type=state.failure_type,
+            failure_detail=state.failure_detail,
+        )
 
-        if state.structured_question:
-            intent = state.structured_question.get("intent")
-            if isinstance(intent, str):
-                return intent
 
-        return None
+
+

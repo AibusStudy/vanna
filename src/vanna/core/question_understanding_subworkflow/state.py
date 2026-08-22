@@ -45,6 +45,8 @@ class QuestUnderstand_NodeResult:
     structured_question: Optional[Dict[str, Any]] = None
     debug_metadata: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
+    failure_type: Optional[str] = None
+    failure_detail: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -52,18 +54,17 @@ class QuestUnderstand_State:
     """Mutable internal state used only while executing the workflow."""
 
     input: QuestUnderstand_Input
-
     routing_intent: Optional[str] = None
     node_outputs: Dict[str, Any] = field(default_factory=dict)
     visited_nodes: List[str] = field(default_factory=list)
     last_node_result: Optional[QuestUnderstand_NodeResult] = None
-
     structured_question: Optional[Dict[str, Any]] = None
-
     debug_metadata: Dict[str, Any] = field(default_factory=dict)
-
     retry: QuestUnderstand_RetryState = field(default_factory=QuestUnderstand_RetryState)
     errors: List[str] = field(default_factory=list)
+    failed_node_id: Optional[str] = None
+    failure_type: Optional[str] = None
+    failure_detail: Optional[Dict[str, Any]] = None
 
     @property
     def original_message(self) -> str:
@@ -80,7 +81,8 @@ class QuestUnderstand_State:
         return self.node_outputs.get(node_id)
 
     def add_error(self, error: str) -> None:
-        self.errors.append(error)
+        if error:
+            self.errors.append(error)
 
 
 @dataclass(frozen=True)
@@ -88,8 +90,12 @@ class QuestUnderstand_FinalResult:
     status: WorkflowStatus
     intent: Optional[str] = None
     structured_output: Optional[Dict[str, Any]] = None
+    ui_component: Optional["UiComponent"] = None
     errors: List[str] = field(default_factory=list)
     retry_counts: Dict[str, int] = field(default_factory=dict)
+    failed_node_id: Optional[str] = None
+    failure_type: Optional[str] = None
+    failure_detail: Optional[Dict[str, Any]] = None
 
     def to_metadata(self) -> Dict[str, Any]:
         return {
@@ -98,6 +104,9 @@ class QuestUnderstand_FinalResult:
             "structured_output": self.structured_output,
             "errors": list(self.errors),
             "retry_counts": dict(self.retry_counts),
+            "failed_node_id": self.failed_node_id,
+            "failure_type": self.failure_type,
+            "failure_detail": self.failure_detail,
         }
 
 
@@ -110,10 +119,8 @@ def apply_node_result(
 
     if result.output is not None:
         state.set_node_output(node_id, result.output)
-
     if result.routing_intent is not None:
         state.routing_intent = result.routing_intent
-
     if result.structured_question is not None:
         state.structured_question = result.structured_question
 
@@ -121,24 +128,13 @@ def apply_node_result(
 
     if result.error:
         state.add_error(result.error)
+        state.failed_node_id = node_id
+
+    if result.failure_type:
+        state.failure_type = result.failure_type
+        state.failed_node_id = node_id
+
+    if result.failure_detail:
+        state.failure_detail = result.failure_detail
 
     return state
-
-
-@dataclass(frozen=True)
-class QuestUnderstand_FinalResult:
-    status: WorkflowStatus
-    intent: Optional[str] = None
-    structured_output: Optional[Dict[str, Any]] = None
-    ui_component: Optional["UiComponent"] = None
-    errors: List[str] = field(default_factory=list)
-    retry_counts: Dict[str, int] = field(default_factory=dict)
-
-    def to_metadata(self) -> Dict[str, Any]:
-        return {
-            "status": self.status,
-            "intent": self.intent,
-            "structured_output": self.structured_output,
-            "errors": list(self.errors),
-            "retry_counts": dict(self.retry_counts),
-        }

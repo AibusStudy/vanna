@@ -1,4 +1,4 @@
-﻿"""
+"""
 Agent implementation for the Vanna Agents framework.
 
 This module provides the main Agent class that orchestrates the interaction
@@ -144,8 +144,8 @@ class Agent:
         self.audit_logger = audit_logger
         self.main_workflow_executor = main_workflow_executor or main_workflow_excutor
 
-        # question_understanding_subworkflow 관련 agent.config.py 적용 부분
-        # max_steps와 retry_limit 적용
+        # question_understanding_subworkflow 愿??agent.config.py ?곸슜 遺遺?
+        # max_steps? retry_limit ?곸슜
         self.question_understanding_subworkflow_executor = question_understanding_subworkflow_executor
         if isinstance(self.question_understanding_subworkflow_executor, PreLlmWorkflowExecutor):
             self.question_understanding_subworkflow_executor.max_steps = self.config.max_workflow_steps
@@ -226,7 +226,7 @@ class Agent:
                     title="Error Processing Message",
                     status="error",
                     description=error_description,
-                    icon="⚠️",
+                    icon="?좑툘",
                 ),
                 simple_component=SimpleTextComponent(
                     text=f"Error: An unexpected error occurred. Please try again.{f' (Conversation ID: {conversation_id})' if conversation_id else ''}"
@@ -623,7 +623,7 @@ class Agent:
         )
 
         # main_workflow / question_understanding_subworkflow
-        # system prompt build 이후 ~ enhance 전에 실행
+        # system prompt build ?댄썑 ~ enhance ?꾩뿉 ?ㅽ뻾
         workflow_result: Optional[QuestUnderstand_FinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
         main_workflow_turn_state = None
@@ -689,15 +689,23 @@ class Agent:
                 )
 
             if main_workflow_turn_state is not None:
-                workflow_metadata = main_workflow_turn_state.question_understanding_subworkflow
-                if workflow_metadata:
-                    context.metadata["question_understanding_subworkflow"] = workflow_metadata
+                question_subflow = main_workflow_turn_state.subworkflow("question_understanding")
+                workflow_metadata = {
+                    "status": question_subflow.status,
+                    "structured_output": main_workflow_turn_state.structured_question,
+                    "errors": list(question_subflow.errors),
+                    "retry_counts": dict(question_subflow.retry_counts),
+                }
+                if main_workflow_turn_state.structured_question:
+                    context.metadata["question_understanding"] = workflow_metadata
+                    context.metadata["structured_question"] = (
+                        main_workflow_turn_state.structured_question
+                    )
 
                 # MainWorkflow owns turn/subworkflow state only.
                 # The existing Agent LLM/tool loop below remains responsible for
                 # producing the final assistant response.
-
-        # question_understanding_subworkflow는 MainWorkflowExecutor 내부에서 실행된다.
+        # question_understanding_subworkflow??MainWorkflowExecutor ?대??먯꽌 ?ㅽ뻾?쒕떎.
         # Agent no longer runs it as a separate branch.
 
         # Enhance system prompt with LLM context enhancer
@@ -741,16 +749,16 @@ class Agent:
                 )
 
         # Build LLM request
-        # question_understanding_subworkflow의 결과를 toolContext와 LlmRequest.metadata에 붙일지 결정
         llm_request_metadata: Dict[str, Any] = {}
-        if (
-            self.config.attach_question_understanding_subworkflow_metadata
-            and workflow_metadata is not None
-        ):
-            llm_request_metadata["question_understanding_subworkflow"] = workflow_metadata
+        attach_question_metadata = getattr(
+            self.config,
+            "attach_question_understanding_subworkflow_metadata",
+            getattr(self.config, "attach_pre_llm_workflow_metadata", False),
+        )
+        if attach_question_metadata and workflow_metadata is not None:
+            llm_request_metadata["question_understanding"] = workflow_metadata
         if main_workflow_metadata is not None:
             llm_request_metadata["main_workflow"] = main_workflow_metadata
-
         request = await self._build_llm_request(
             conversation,
             tool_schemas,
@@ -865,7 +873,7 @@ class Agent:
                         title=f"Executing {tool_call.name}",
                         status="running",
                         description=f"Running tool with {len(tool_call.arguments)} arguments",
-                        icon="⚙️",
+                        icon="?숋툘",
                         metadata=tool_call.arguments,
                     )
 
@@ -996,15 +1004,33 @@ class Agent:
                                     },
                                 )
 
+                    if main_workflow_turn_state is not None and tool_call.name == "run_sql":
+                        tool_arguments = tool_call.arguments or {}
+                        sql_text = None
+                        if isinstance(tool_arguments, dict):
+                            sql_text = (
+                                tool_arguments.get("sql")
+                                or tool_arguments.get("query")
+                                or tool_arguments.get("statement")
+                            )
+                        if sql_text is not None:
+                            sql_text = str(sql_text)
+                        main_workflow_turn_state.record_sql_attempt(
+                            sql=sql_text,
+                            status="success" if result.success else "failed",
+                            error_message=None if result.success else result.error,
+                        )
+                        main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                        context.metadata["main_workflow"] = main_workflow_metadata
                     # Update status card to show completion
                     final_status = "success" if result.success else "error"
                     if result.success:
                         final_description = "Tool completed successfully"
                         if tool_call.name == "run_sql":
                             final_description += (
-                                "<br>Parameters의 SQL은 LLM이 생성한 수정 전 "
-                                "SQL이며, 실제 실행 SQL은 검증 과정에서 "
-                                "변경될 수 있습니다."
+                                "<br>Parameters??SQL? LLM???앹꽦???섏젙 ??"
+                                "SQL?대ŉ, ?ㅼ젣 ?ㅽ뻾 SQL? 寃利?怨쇱젙?먯꽌 "
+                                "蹂寃쎈맆 ???덉뒿?덈떎."
                             )
                     else:
                         final_description = (
@@ -1188,7 +1214,7 @@ class Agent:
             )
 
             # Provide detailed warning message to user
-            warning_message = f"""⚠️ **Tool Execution Limit Reached**
+            warning_message = f"""?좑툘 **Tool Execution Limit Reached**
 
 The agent stopped after executing {tool_iterations} tools (the configured maximum). The task may not be fully complete.
 
@@ -1549,4 +1575,8 @@ You can:
                     )
 
         return response  #
+
+
+
+
 

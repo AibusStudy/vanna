@@ -1,11 +1,16 @@
-"""Graph container for Data-Discovering workflow nodes and edges."""
+﻿"""Graph and default nodes for Data-Discovering workflow."""
 
 from __future__ import annotations
+
+import logging
 from collections import defaultdict, deque
-from typing import DefaultDict, Dict, List, Optional, Set
+from typing import Any, DefaultDict, Dict, List, Optional, Set
 
 from .edge import EdgeCondition, DataDiscover_Edge
 from .node import DataDiscover_Node
+from .state import DataDiscover_NodeResult, DataDiscover_State
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowGraphError(ValueError):
@@ -13,7 +18,7 @@ class WorkflowGraphError(ValueError):
 
 
 class WorkflowGraph:
-    """Node-edge graph executed by DataDiscoveringSubWorkflowExecutor."""
+    """Node-edge graph executed by DataDiscoverSubWorkflowExecutor."""
 
     def __init__(self) -> None:
         self._nodes: Dict[str, DataDiscover_Node] = {}
@@ -36,13 +41,10 @@ class WorkflowGraph:
             raise WorkflowGraphError(f"Duplicate workflow node: {node.node_id}")
 
         self._nodes[node.node_id] = node
-
         if start:
             self.set_start(node.node_id)
-
         if end:
             self.add_end(node.node_id)
-
         return self
 
     def set_start(self, node_id: str) -> "WorkflowGraph":
@@ -65,7 +67,6 @@ class WorkflowGraph:
     ) -> "WorkflowGraph":
         self._ensure_node_exists(source_node_id)
         self._ensure_node_exists(target_node_id)
-
         self._edges_by_source[source_node_id].append(
             DataDiscover_Edge(
                 source_node_id=source_node_id,
@@ -87,24 +88,18 @@ class WorkflowGraph:
     def validate(self) -> None:
         if not self._nodes:
             raise WorkflowGraphError("Workflow graph has no nodes.")
-
         if self.start_node_id is None:
             raise WorkflowGraphError("Workflow graph has no start node.")
-
         self._ensure_node_exists(self.start_node_id)
-
         if not self.end_node_ids:
             raise WorkflowGraphError("Workflow graph has no end nodes.")
 
         for end_node_id in self.end_node_ids:
             self._ensure_node_exists(end_node_id)
-
         for source_node_id, edges in self._edges_by_source.items():
             self._ensure_node_exists(source_node_id)
-
             for edge in edges:
                 self._ensure_node_exists(edge.target_node_id)
-
         for node_id in self._nodes:
             if node_id not in self.end_node_ids and not self.get_edges(node_id):
                 raise WorkflowGraphError(
@@ -124,21 +119,239 @@ class WorkflowGraph:
 
         visited_node_ids: Set[str] = set()
         queue = deque([self.start_node_id])
-
         while queue:
             node_id = queue.popleft()
-
             if node_id in visited_node_ids:
                 continue
-
             visited_node_ids.add(node_id)
-
             for edge in self.get_edges(node_id):
                 if edge.target_node_id not in visited_node_ids:
                     queue.append(edge.target_node_id)
-
         return self.node_ids - visited_node_ids
 
     def _ensure_node_exists(self, node_id: str) -> None:
         if node_id not in self._nodes:
             raise WorkflowGraphError(f"Unknown workflow node: {node_id}")
+
+
+class MetadataSearchNode:
+    """Runs batch metadata search from question-understanding search_plan."""
+
+    node_id = "metadata_search"
+
+    def __init__(self, search_service: Any) -> None:
+        self.search_service = search_service
+
+    async def run(self, state: DataDiscover_State) -> DataDiscover_NodeResult:
+        structured_output = state.input.structured_output or {}
+        queries = self._build_queries(structured_output)
+        warnings: list[str] = []
+
+        if not queries:
+            fallback_query = _question_from_structured_output(structured_output)
+            if fallback_query:
+                queries = [
+                    {
+                        "query_id": "Q1",
+                        "query": fallback_query,
+                        "scope": "auto",
+                    }
+                ]
+                warnings.append("metadata search_plan missing; used structured question")
+            else:
+                return DataDiscover_NodeResult(
+                    status="success",
+                    metadata_output={"status": "skipped", "tables": [], "columns": []},
+                    warnings=["metadata search skipped: search_plan and question missing"],
+                )
+
+        try:
+            result = self.search_service.search_batch(queries)
+        except Exception as exc:
+            return DataDiscover_NodeResult(
+                status="failed",
+                warnings=warnings,
+                error=f"metadata_execution_error: {type(exc).__name__}: {exc}",
+                failure_type="metadata_execution_error",
+                failure_detail={
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "queries": queries,
+                },
+            )
+
+        result_dict = dict(result)
+        if _is_metadata_semantic_mismatch(result_dict):
+            return DataDiscover_NodeResult(
+                status="failed",
+                metadata_output={"status": "semantic_mismatch", **result_dict},
+                warnings=warnings + list(result_dict.get("warnings", [])),
+                error="metadata_semantic_mismatch: metadata result does not match structured question",
+                failure_type="metadata_semantic_mismatch",
+                failure_detail={
+                    "queries": queries,
+                    "structured_question": structured_output,
+                    "metadata_status": result_dict.get("status"),
+                    "mismatch_reason": result_dict.get("mismatch_reason"),
+                },
+            )
+
+        return DataDiscover_NodeResult(
+            status="success",
+            metadata_output={"status": "success", **result_dict},
+            warnings=warnings + list(result_dict.get("warnings", [])),
+        )
+
+    @staticmethod
+    def _build_queries(structured_output: dict[str, Any]) -> list[dict[str, Any]]:
+        search_plan = structured_output.get("search_plan")
+        if isinstance(search_plan, dict):
+            raw_queries = search_plan.get("queries") or search_plan.get("search_queries")
+        else:
+            raw_queries = structured_output.get("search_queries")
+
+        if not isinstance(raw_queries, list):
+            return []
+
+        queries: list[dict[str, Any]] = []
+        for index, raw_query in enumerate(raw_queries[:10], start=1):
+            if not isinstance(raw_query, dict):
+                continue
+            query_text = raw_query.get("query")
+            if not isinstance(query_text, str) or not query_text.strip():
+                continue
+            queries.append(
+                {
+                    "query_id": raw_query.get("query_id") or f"Q{index}",
+                    "query": query_text.strip(),
+                    "scope": raw_query.get("scope", "auto"),
+                    "table_names": raw_query.get("table_names"),
+                }
+            )
+        return queries
+
+
+class FewShotSearchNode:
+    """Runs few-shot search as a node while leaving tool usage available elsewhere."""
+
+    node_id = "fewshot_search"
+
+    def __init__(self, agent_memory: Any = None, *, limit: int = 3) -> None:
+        self.agent_memory = agent_memory
+        self.limit = limit
+
+    async def run(self, state: DataDiscover_State) -> DataDiscover_NodeResult:
+        if self.agent_memory is None:
+            return DataDiscover_NodeResult(
+                status="finish",
+                fewshot_output={"status": "skipped", "examples": []},
+                warnings=["fewshot search skipped: agent_memory missing"],
+            )
+
+        question = _question_from_structured_output(state.input.structured_output or {})
+        if not question:
+            return DataDiscover_NodeResult(
+                status="finish",
+                fewshot_output={"status": "skipped", "examples": []},
+                warnings=["fewshot search skipped: question missing"],
+            )
+
+        try:
+            results = await self.agent_memory.search_similar_usage(
+                question=question,
+                context=None,
+                limit=self.limit,
+                similarity_threshold=0.7,
+            )
+        except Exception as exc:
+            return DataDiscover_NodeResult(
+                status="finish",
+                fewshot_output={"status": "failed", "examples": []},
+                warnings=[f"fewshot search failed: {type(exc).__name__}: {exc}"],
+            )
+
+        examples: list[dict[str, Any]] = []
+        for result in results[: self.limit]:
+            memory = getattr(result, "memory", result)
+            examples.append(
+                {
+                    "similarity": getattr(result, "similarity_score", None),
+                    "question": getattr(memory, "question", None),
+                    "sql": getattr(memory, "sql", None),
+                    "tool_name": getattr(memory, "tool_name", None),
+                    "args": getattr(memory, "args", None),
+                }
+            )
+
+        return DataDiscover_NodeResult(
+            status="finish",
+            fewshot_output={"status": "success", "examples": examples},
+        )
+
+
+def build_data_discovering_graph(
+    *,
+    metadata_search_service: Any,
+    agent_memory: Any = None,
+    fewshot_limit: int = 3,
+) -> WorkflowGraph:
+    graph = WorkflowGraph()
+    graph.add_node(
+        MetadataSearchNode(metadata_search_service),
+        start=True,
+    )
+    graph.add_node(
+        FewShotSearchNode(agent_memory, limit=fewshot_limit),
+        end=True,
+    )
+    graph.add_edge(
+        "metadata_search",
+        "fewshot_search",
+        label="metadata_done_or_warning",
+    )
+    return graph
+
+
+def build_data_discovering_subworkflow_executor(
+    *,
+    metadata_search_service: Any,
+    agent_memory: Any = None,
+    fewshot_limit: int = 3,
+    max_steps: int = 5,
+    retry_limit: int = 1,
+) -> DataDiscoverSubWorkflowExecutor:
+#    
+    return DataDiscoverSubWorkflowExecutor(
+        build_data_discovering_graph(
+            metadata_search_service=metadata_search_service,
+            agent_memory=agent_memory,
+            fewshot_limit=fewshot_limit,
+        ),
+        max_steps=max_steps,
+        retry_limit=retry_limit,
+    )
+
+
+def _question_from_structured_output(structured_output: dict[str, Any]) -> str:
+    for key in ("original_question", "question", "user_question", "rewritten_question"):
+        value = structured_output.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+
+
+
+
+
+def _is_metadata_semantic_mismatch(result: dict[str, Any]) -> bool:
+    if result.get("failure_type") == "metadata_semantic_mismatch":
+        return True
+    if result.get("metadata_semantic_mismatch") is True:
+        return True
+    if result.get("semantic_mismatch") is True:
+        return True
+    status = result.get("status")
+    return status in {"metadata_semantic_mismatch", "semantic_mismatch", "mismatch"}
+

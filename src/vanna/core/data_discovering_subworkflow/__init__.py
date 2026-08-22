@@ -1,17 +1,20 @@
-"""Data-Discovering workflow primitives for enriching an Agent request before the first LLM call.
-
-This package does not handle slash-command workflows or post-LLM tool execution.
-"""
+"""Data-Discovering workflow primitives for enriching an Agent request before the first LLM call."""
 
 from .edge import EdgeCondition, DataDiscover_Edge
 from .executor import DataDiscoverSubWorkflowExecutor
-from .graph import WorkflowGraph, WorkflowGraphError
-from .node import WorkflowNode
-
+from .graph import (
+    FewShotSearchNode,
+    MetadataSearchNode,
+    WorkflowGraph,
+    WorkflowGraphError,
+    build_data_discovering_graph,
+    build_data_discovering_subworkflow_executor,
+)
+from .node import DataDiscover_Node
 from .state import (
-    DataDiscover_NodeResult,
     DataDiscover_FinalResult,
     DataDiscover_Input,
+    DataDiscover_NodeResult,
     DataDiscover_RetryState,
     DataDiscover_State,
     NodeStatus,
@@ -21,18 +24,21 @@ from .state import (
 
 __all__ = [
     "EdgeCondition",
-    "WorkflowEdge",
-    "QuestUnderstand_FinalResult",
+    "DataDiscover_Edge",
+    "DataDiscoverSubWorkflowExecutor",
     "WorkflowGraph",
     "WorkflowGraphError",
-    "WorkflowNode",
-    "WorkflowStatus",
-    "apply_node_result",
-    "DataDiscoverSubWorkflowExecutor",
+    "MetadataSearchNode",
+    "FewShotSearchNode",
+    "build_data_discovering_graph",
+    "build_data_discovering_subworkflow_executor",
+    "DataDiscover_Node",
     "DataDiscover_NodeResult",
     "DataDiscover_FinalResult",
     "DataDiscover_Input",
     "DataDiscover_RetryState",
     "DataDiscover_State",
     "NodeStatus",
+    "WorkflowStatus",
+    "apply_node_result",
 ]

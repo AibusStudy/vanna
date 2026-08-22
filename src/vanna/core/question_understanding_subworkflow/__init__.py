@@ -1,12 +1,9 @@
-"""Question-Understanding workflow primitives for enriching an Agent request before the first LLM call.
+﻿"""Question-Understanding workflow primitives for enriching an Agent request before the first LLM call."""
 
-This package does not handle slash-command workflows or post-LLM tool execution.
-"""
-
-from .edge import EdgeCondition, WorkflowEdge
+from .edge import EdgeCondition, QuestionUnderstand_Edge
 from .executor import QuestionUnderstandSubWorkflowExecutor
 from .graph import WorkflowGraph, WorkflowGraphError
-from .node import WorkflowNode
+from .node import QuestionUnderstand_Node
 from .protocols import (
     IntentClassifier,
     QuestionStructurer,
@@ -14,11 +11,11 @@ from .protocols import (
     TimeNormalizer,
 )
 from .state import (
-    QuestUnderstand_NodeResult,
     NodeStatus,
-    QuestUnderstand_RetryState,
     QuestUnderstand_FinalResult,
     QuestUnderstand_Input,
+    QuestUnderstand_NodeResult,
+    QuestUnderstand_RetryState,
     QuestUnderstand_State,
     WorkflowStatus,
     apply_node_result,
@@ -26,20 +23,20 @@ from .state import (
 
 __all__ = [
     "EdgeCondition",
-    "IntentClassifier",
-    "QuestUnderstand_NodeResult",
-    "NodeStatus",
+    "QuestionUnderstand_Edge",
     "QuestionUnderstandSubWorkflowExecutor",
-    "QuestionStructurer",
-    "QuestUnderstand_RetryState",
-    "StructuredQuestionValidator",
-    "TimeNormalizer",
-    "WorkflowEdge",
-    "QuestUnderstand_FinalResult",
     "WorkflowGraph",
     "WorkflowGraphError",
+    "QuestionUnderstand_Node",
+    "IntentClassifier",
+    "QuestionStructurer",
+    "StructuredQuestionValidator",
+    "TimeNormalizer",
+    "QuestUnderstand_NodeResult",
+    "NodeStatus",
+    "QuestUnderstand_RetryState",
+    "QuestUnderstand_FinalResult",
     "QuestUnderstand_Input",
-    "WorkflowNode",
     "QuestUnderstand_State",
     "WorkflowStatus",
     "apply_node_result",

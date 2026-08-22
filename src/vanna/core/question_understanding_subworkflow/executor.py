@@ -69,7 +69,7 @@ class QuestionUnderstandSubWorkflowExecutor:
                 attempts = state.retry.increment(current_node_id)
 
                 if attempts <= self.retry_limit:
-                    # conditional edge에 따른 node 이동
+                    # conditional edge???곕Ⅸ node ?대룞
                     retry_edge = await self._select_next_edge(
                         state,
                         current_node_id,
@@ -168,3 +168,21 @@ class QuestionUnderstandSubWorkflowExecutor:
                 return intent
 
         return None
+
+    @staticmethod
+    def _infer_failure_type(errors: List[str]) -> Optional[str]:
+        known_failure_types = {
+            "intent_classification_failed",
+            "time_normalization_failed",
+            "time_metadata_validation_failed",
+            "question_structuring_failed",
+            "search_queries_generation_failed",
+            "json_validation_failed",
+            "json_validation_retry_exceeded",
+        }
+        joined_errors = "\n".join(str(error) for error in errors)
+        for failure_type in known_failure_types:
+            if failure_type in joined_errors:
+                return failure_type
+        return None
+

@@ -8,11 +8,17 @@ from vanna.core.tool import ToolContext, ToolSchema
 
 MainWorkflowStatus = Literal["success", "failed", "skipped"]
 MainWorkflowStage = Literal[
-    "question_understanding_subworkflow",
+    "question_understanding",
     "data_discovery",
     "sql_processing",
     "final",
 ]
+SqlAttemptStatus = Literal["success", "failed"]
+
+_SUBFLOW_ALIASES = {
+    "pre_llm_workflow": "question_understanding",
+    "question_understanding_subworkflow": "question_understanding",
+}
 
 
 @dataclass
@@ -74,6 +80,22 @@ class SubworkflowState:
         }
 
 
+@dataclass
+class SqlAttemptState:
+    attempt_number: int
+    sql: str | None = None
+    error_message: str | None = None
+    status: SqlAttemptStatus = "failed"
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "attempt_number": self.attempt_number,
+            "sql": self.sql,
+            "error_message": self.error_message,
+            "status": self.status,
+        }
+
+
 @dataclass(frozen=True)
 class MainWorkflowInput:
     user_id: str
@@ -90,53 +112,88 @@ class MainWorkflowInput:
 class MainWorkflowTurnState:
     turn_id: str
     original_question: str
-    stage: MainWorkflowStage = "question_understanding_subworkflow"
+
+    stage: MainWorkflowStage = "question_understanding"
     operation: str | None = None
+
     fallback_state: FallbackState = field(default_factory=FallbackState)
 
-    subworkflows: dict[str, SubworkflowState] = field(
+    subflows: dict[str, SubworkflowState] = field(
         default_factory=lambda: {
-            "question_understanding_subworkflow": SubworkflowState(),
+            "question_understanding": SubworkflowState(),
             "data_discovery": SubworkflowState(),
-            "sql_processing": SubworkflowState(),
         }
     )
 
-    question_understanding_subworkflow: dict[str, Any] | None = None
-    data_discovery: dict[str, Any] | None = None
-    sql_processing: dict[str, Any] | None = None
+    structured_question: dict[str, Any] = field(default_factory=dict)
+
+    metadata: dict[str, Any] = field(
+        default_factory=lambda: {
+            "searches": [],
+            "candidates": [],
+            "selected": [],
+        }
+    )
+
+    fewshot: list[dict[str, Any]] = field(default_factory=list)
+
+    current_attempt_number: int = 0
+    attempts: list[SqlAttemptState] = field(default_factory=list)
 
     result: dict[str, Any] = field(
         default_factory=lambda: {
             "message": None,
-            "sql": None,
             "csv_name": None,
             "json_name": None,
-            "status": None,
         }
     )
+
+    def subflow(self, name: str) -> SubworkflowState:
+        normalized_name = _SUBFLOW_ALIASES.get(name, name)
+        if normalized_name not in self.subflows:
+            raise ValueError(f"Unsupported subflow: {name}")
+        return self.subflows[normalized_name]
+
     def subworkflow(self, name: str) -> SubworkflowState:
-        if name not in self.subworkflows:
-            self.subworkflows[name] = SubworkflowState()
-        return self.subworkflows[name]
+        return self.subflow(name)
+
+    def record_sql_attempt(
+        self,
+        *,
+        sql: str | None,
+        status: SqlAttemptStatus,
+        error_message: str | None = None,
+    ) -> SqlAttemptState:
+        self.current_attempt_number += 1
+        attempt = SqlAttemptState(
+            attempt_number=self.current_attempt_number,
+            sql=sql,
+            error_message=error_message,
+            status=status,
+        )
+        self.attempts.append(attempt)
+        return attempt
 
     def to_metadata(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
-            "original_question": self.original_question,
             "stage": self.stage,
             "operation": self.operation,
             "fallback_state": {
                 **self.fallback_state.snapshot(),
                 "history": list(self.fallback_state.history),
             },
-            "subworkflows": {
-                name: subworkflow.to_metadata()
-                for name, subworkflow in self.subworkflows.items()
+            "subflows": {
+                name: subflow.to_metadata() for name, subflow in self.subflows.items()
             },
-            "question_understanding_subworkflow": self.question_understanding_subworkflow,
-            "data_discovery": self.data_discovery,
-            "sql_processing": self.sql_processing,
+            "structured_question": dict(self.structured_question),
+            "metadata": {
+                "searches": list(self.metadata.get("searches", [])),
+                "candidates": list(self.metadata.get("candidates", [])),
+                "selected": list(self.metadata.get("selected", [])),
+            },
+            "fewshot": list(self.fewshot),
+            "current_attempt_number": self.current_attempt_number,
+            "attempts": [attempt.to_metadata() for attempt in self.attempts],
             "result": dict(self.result),
         }
-

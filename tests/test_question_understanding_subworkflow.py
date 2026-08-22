@@ -25,7 +25,7 @@ sys.path.insert(0, str(TESTS_PATH))
 
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_NodeResult,
-    PreLlmWorkflowExecutor,
+    QuestionUnderstandSubWorkflowExecutor,
     WorkflowGraph,
     WorkflowGraphError,
     QuestUnderstand_Input,
@@ -125,7 +125,7 @@ def build_input(message: str = "Show me sales by day for this week") -> QuestUnd
 @pytest.mark.asyncio
 async def test_fake_sql_workflow_reaches_structured_result() -> None:
     graph = build_fake_pre_llm_graph(intent="sql")
-    executor = PreLlmWorkflowExecutor(graph)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     result = await executor.run(build_input())
 
@@ -139,7 +139,7 @@ async def test_fake_sql_workflow_reaches_structured_result() -> None:
 @pytest.mark.asyncio
 async def test_fake_general_workflow_is_skipped() -> None:
     graph = build_fake_pre_llm_graph(intent="general")
-    executor = PreLlmWorkflowExecutor(graph)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     result = await executor.run(build_input("hello"))
 
@@ -152,7 +152,7 @@ async def test_fake_general_workflow_is_skipped() -> None:
 async def test_workflow_final_result_exposes_minimal_metadata() -> None:
     graph = WorkflowGraph()
     graph.add_node(MetadataFinishNode(), start=True, end=True)
-    executor = PreLlmWorkflowExecutor(graph)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     result = await executor.run(build_input())
 
@@ -172,7 +172,7 @@ async def test_workflow_final_result_exposes_minimal_metadata() -> None:
 async def test_retry_limit_exceeded_returns_failed_result() -> None:
     graph = WorkflowGraph()
     graph.add_node(AlwaysRetryNode(), start=True, end=True)
-    executor = PreLlmWorkflowExecutor(graph, retry_limit=1)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph, retry_limit=1)
 
     result = await executor.run(build_input())
 
@@ -193,7 +193,7 @@ async def test_retry_follows_matching_edge_and_preserves_retry_count() -> None:
         condition=RetryStatusIs("retry"),
         label="regenerate",
     )
-    executor = PreLlmWorkflowExecutor(graph, retry_limit=1)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph, retry_limit=1)
 
     result = await executor.run(build_input())
 
@@ -208,7 +208,7 @@ async def test_retry_ignores_unconditional_edge_and_retries_current_node() -> No
     graph.add_node(RetryOnceThenSucceedNode(), start=True)
     graph.add_node(SuccessfulNode("end"), end=True)
     graph.add_edge("retry_then_succeed", "end")
-    executor = PreLlmWorkflowExecutor(graph, retry_limit=1)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph, retry_limit=1)
 
     result = await executor.run(build_input())
 
@@ -224,7 +224,7 @@ async def test_max_steps_exceeded_returns_failed_result() -> None:
     graph.add_node(SuccessfulNode("end"), end=True)
     graph.add_edge("loop", "loop", label="repeat")
     graph.add_edge("loop", "end", label="reachable_end")
-    executor = PreLlmWorkflowExecutor(graph, max_steps=2)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph, max_steps=2)
 
     result = await executor.run(build_input())
 
@@ -236,7 +236,7 @@ async def test_max_steps_exceeded_returns_failed_result() -> None:
 async def test_missing_start_node_is_rejected() -> None:
     graph = WorkflowGraph()
     graph.add_node(SuccessfulNode("end"), end=True)
-    executor = PreLlmWorkflowExecutor(graph)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     with pytest.raises(WorkflowGraphError, match="no start node"):
         await executor.run(build_input())
@@ -246,7 +246,7 @@ async def test_missing_start_node_is_rejected() -> None:
 async def test_missing_end_node_is_rejected() -> None:
     graph = WorkflowGraph()
     graph.add_node(SuccessfulNode("start"), start=True)
-    executor = PreLlmWorkflowExecutor(graph)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     with pytest.raises(WorkflowGraphError, match="no end nodes"):
         await executor.run(build_input())
@@ -259,7 +259,7 @@ async def test_unreachable_node_is_rejected() -> None:
     graph.add_node(SuccessfulNode("end"), end=True)
     graph.add_node(SuccessfulNode("unreachable"), end=True)
     graph.add_edge("start", "end")
-    executor = PreLlmWorkflowExecutor(graph)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     with pytest.raises(WorkflowGraphError, match="unreachable nodes"):
         await executor.run(build_input())

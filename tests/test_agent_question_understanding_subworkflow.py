@@ -25,7 +25,7 @@ from vanna.core.filter import ConversationFilter
 from vanna.core.llm import LlmRequest, LlmResponse, LlmService, LlmStreamChunk
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_NodeResult,
-    PreLlmWorkflowExecutor,
+    QuestionUnderstandSubWorkflowExecutor,
     QuestUnderstand_FinalResult,
     WorkflowGraph,
     QuestUnderstand_Input,
@@ -356,7 +356,7 @@ async def test_agent_attaches_workflow_metadata_to_tool_context() -> None:
 def test_agent_applies_configured_workflow_limits_to_executor() -> None:
     graph = WorkflowGraph()
     graph.add_node(FinishWorkflowNode(), start=True, end=True)
-    workflow_executor = PreLlmWorkflowExecutor(graph, max_steps=99, retry_limit=99)
+    workflow_executor = QuestionUnderstandSubWorkflowExecutor(graph, max_steps=99, retry_limit=99)
 
     Agent(
         llm_service=RecordingLlmService(),

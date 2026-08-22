@@ -36,9 +36,8 @@ from vanna.core.main_workflow.state import MainWorkflowInput
 from vanna.core.main_workflow.excutor import MainWorkflowExecutor
 from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
 from vanna.core.question_understanding_subworkflow import (
-    PreLlmWorkflowExecutor,
+    QuestionUnderstandSubWorkflowExecutor,
     QuestUnderstand_FinalResult,
-    QuestUnderstand_Input,
 )
 from vanna.core.recovery import ErrorRecoveryStrategy, RecoveryActionType
 from vanna.core.enricher import ToolContextEnricher
@@ -107,7 +106,7 @@ class Agent:
         audit_logger: Optional[AuditLogger] = None,
         main_workflow_executor: Optional[MainWorkflowExecutor] = None,
         main_workflow_excutor: Optional[MainWorkflowExecutor] = None,
-        question_understanding_subworkflow_executor: Optional[PreLlmWorkflowExecutor] = None,
+        question_understanding_subworkflow_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
     ):
         self.llm_service = llm_service
         self.tool_registry = tool_registry
@@ -147,7 +146,7 @@ class Agent:
         # question_understanding_subworkflow 愿??agent.config.py ?곸슜 遺遺?
         # max_steps? retry_limit ?곸슜
         self.question_understanding_subworkflow_executor = question_understanding_subworkflow_executor
-        if isinstance(self.question_understanding_subworkflow_executor, PreLlmWorkflowExecutor):
+        if isinstance(self.question_understanding_subworkflow_executor, QuestionUnderstandSubWorkflowExecutor):
             self.question_understanding_subworkflow_executor.max_steps = self.config.max_workflow_steps
             self.question_understanding_subworkflow_executor.retry_limit = (
                 self.config.workflow_retry_limit
@@ -705,7 +704,7 @@ class Agent:
                 # MainWorkflow owns turn/subworkflow state only.
                 # The existing Agent LLM/tool loop below remains responsible for
                 # producing the final assistant response.
-        # question_understanding_subworkflow??MainWorkflowExecutor ?대??먯꽌 ?ㅽ뻾?쒕떎.
+        # question_understanding_subworkflow는 MainWorkflowExecutor 내에서 실행됨.
         # Agent no longer runs it as a separate branch.
 
         # Enhance system prompt with LLM context enhancer

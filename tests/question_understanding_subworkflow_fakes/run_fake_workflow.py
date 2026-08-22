@@ -17,7 +17,7 @@ TESTS_PATH = REPO_ROOT / "tests"
 sys.path.insert(0, str(SRC_PATH))
 sys.path.insert(0, str(TESTS_PATH))
 
-from vanna.core.question_understanding_subworkflow import PreLlmWorkflowExecutor, QuestUnderstand_Input
+from vanna.core.question_understanding_subworkflow import QuestionUnderstandSubWorkflowExecutor, QuestUnderstand_Input
 
 from question_understanding_subworkflow_fakes.fake_graph import build_fake_pre_llm_graph
 
@@ -29,7 +29,7 @@ async def main() -> None:
     )
 
     graph = build_fake_pre_llm_graph(intent="sql")
-    executor = PreLlmWorkflowExecutor(graph, max_steps=10, retry_limit=1)
+    executor = QuestionUnderstandSubWorkflowExecutor(graph, max_steps=10, retry_limit=1)
 
     result = await executor.run(
         QuestUnderstand_Input(

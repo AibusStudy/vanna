@@ -10,6 +10,7 @@ MainWorkflowStatus = Literal["success", "failed", "skipped"]
 MainWorkflowStage = Literal[
     "question_understanding",
     "data_discovery",
+    "context_enrichment",
     "sql_processing",
     "final",
 ]
@@ -18,6 +19,7 @@ SqlAttemptStatus = Literal["success", "failed"]
 _SUBFLOW_ALIASES = {
     "pre_llm_workflow": "question_understanding",
     "question_understanding_subworkflow": "question_understanding",
+    "sql_processing_agentic_subworkflow": "sql_processing",
 }
 
 
@@ -122,6 +124,7 @@ class MainWorkflowTurnState:
         default_factory=lambda: {
             "question_understanding": SubworkflowState(),
             "data_discovery": SubworkflowState(),
+            "sql_processing": SubworkflowState(),
         }
     )
 
@@ -136,6 +139,17 @@ class MainWorkflowTurnState:
     )
 
     fewshot: list[dict[str, Any]] = field(default_factory=list)
+
+    context_enrichment: dict[str, Any] = field(
+        default_factory=lambda: {
+            "status": "skipped",
+            "enhancer": None,
+            "input_summary": {},
+            "output_summary": {},
+            "warnings": [],
+            "errors": [],
+        }
+    )
 
     current_attempt_number: int = 0
     attempts: list[SqlAttemptState] = field(default_factory=list)
@@ -156,6 +170,33 @@ class MainWorkflowTurnState:
 
     def subworkflow(self, name: str) -> SubworkflowState:
         return self.subflow(name)
+
+    def record_context_enrichment(
+        self,
+        *,
+        status: str,
+        enhancer: str | None,
+        system_prompt_before: str | None,
+        system_prompt_after: str | None,
+        errors: list[str] | None = None,
+        warnings: list[str] | None = None,
+    ) -> None:
+        self.context_enrichment = {
+            "status": status,
+            "enhancer": enhancer,
+            "input_summary": {
+                "has_structured_question": bool(self.structured_question),
+                "metadata_candidate_count": len(self.metadata.get("candidates", [])),
+                "fewshot_count": len(self.fewshot),
+                "system_prompt_length_before": len(system_prompt_before or ""),
+            },
+            "output_summary": {
+                "system_prompt_length_after": len(system_prompt_after or ""),
+                "changed": (system_prompt_before or "") != (system_prompt_after or ""),
+            },
+            "warnings": list(warnings or []),
+            "errors": list(errors or []),
+        }
 
     def record_sql_attempt(
         self,
@@ -193,6 +234,7 @@ class MainWorkflowTurnState:
                 "selected": list(self.metadata.get("selected", [])),
             },
             "fewshot": list(self.fewshot),
+            "context_enrichment": dict(self.context_enrichment),
             "current_attempt_number": self.current_attempt_number,
             "attempts": [attempt.to_metadata() for attempt in self.attempts],
             "result": dict(self.result),

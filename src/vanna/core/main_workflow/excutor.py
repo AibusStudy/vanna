@@ -83,10 +83,10 @@ class MainWorkflowExecutor:
             state.subflow("data_discovery").status = "skipped"
         _log_turn_state("data_discovery_saved", state)
 
-        state.stage = "sql_processing"
+        state.stage = "context_enrichment"
         if state.operation not in {"clarification_required", "continue_with_warning"}:
-            state.operation = "agent_llm_tool_loop_ready"
-        _log_turn_state("sql_processing_ready", state)
+            state.operation = "context_enrichment_ready"
+        _log_turn_state("context_enrichment_ready", state)
         return state
 
     async def _run_question_understanding_with_fb1(
@@ -500,5 +500,6 @@ class MainWorkflowExecutor:
         if isinstance(result, dict):
             return result
         return {"status": getattr(result, "status", "success")}
+
 
 

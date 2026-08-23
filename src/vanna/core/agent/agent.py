@@ -34,6 +34,10 @@ from vanna.core.lifecycle import LifecycleHook
 from vanna.core.middleware import LlmMiddleware
 from vanna.core.main_workflow.state import MainWorkflowInput
 from vanna.core.main_workflow.excutor import MainWorkflowExecutor
+from vanna.core.sql_processing_agentic_subworkflow import (
+    SqlProcessingInput,
+    SqlProcessingSubworkflowExecutor,
+)
 from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
 from vanna.core.question_understanding_subworkflow import (
     QuestionUnderstandSubWorkflowExecutor,
@@ -143,8 +147,8 @@ class Agent:
         self.audit_logger = audit_logger
         self.main_workflow_executor = main_workflow_executor or main_workflow_excutor
 
-        # question_understanding_subworkflow 愿??agent.config.py ?곸슜 遺遺?
-        # max_steps? retry_limit ?곸슜
+        # question_understanding_subworkflow 관련 agent.config.py 적용부분
+        # max_steps와 retry_limit 적용
         self.question_understanding_subworkflow_executor = question_understanding_subworkflow_executor
         if isinstance(self.question_understanding_subworkflow_executor, QuestionUnderstandSubWorkflowExecutor):
             self.question_understanding_subworkflow_executor.max_steps = self.config.max_workflow_steps
@@ -225,7 +229,7 @@ class Agent:
                     title="Error Processing Message",
                     status="error",
                     description=error_description,
-                    icon="?좑툘",
+                    icon="⚠️",
                 ),
                 simple_component=SimpleTextComponent(
                     text=f"Error: An unexpected error occurred. Please try again.{f' (Conversation ID: {conversation_id})' if conversation_id else ''}"
@@ -621,8 +625,8 @@ class Agent:
             user, tool_schemas
         )
 
-        # main_workflow / question_understanding_subworkflow
-        # system prompt build ?댄썑 ~ enhance ?꾩뿉 ?ㅽ뻾
+        # main_workflow
+        # system prompt build 이후 ~ enhance 전에 실행
         workflow_result: Optional[QuestUnderstand_FinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
         main_workflow_turn_state = None
@@ -704,28 +708,57 @@ class Agent:
                 # MainWorkflow owns turn/subworkflow state only.
                 # The existing Agent LLM/tool loop below remains responsible for
                 # producing the final assistant response.
-        # question_understanding_subworkflow는 MainWorkflowExecutor 내에서 실행됨.
         # Agent no longer runs it as a separate branch.
 
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
             enhancement_span = None
+            enhancer_name = self.llm_context_enhancer.__class__.__name__
+            system_prompt_before_enrichment = system_prompt
             if self.observability_provider:
                 enhancement_span = await self.observability_provider.create_span(
                     "agent.llm_context.enhance_system_prompt",
-                    attributes={
-                        "enhancer": self.llm_context_enhancer.__class__.__name__
-                    },
+                    attributes={"enhancer": enhancer_name},
                 )
 
-            system_prompt = (
-                await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
-                    system_prompt,
-                    message,
-                    user,
-                    workflow_result,
-                )
-            )
+            try:
+                try:
+                    system_prompt = await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
+                        system_prompt,
+                        message,
+                        user,
+                        workflow_result,
+                        workflow_state=main_workflow_turn_state,
+                        workflow_metadata=main_workflow_metadata,
+                    )
+                except TypeError:
+                    system_prompt = await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
+                        system_prompt,
+                        message,
+                        user,
+                        workflow_result,
+                    )
+                if main_workflow_turn_state is not None:
+                    main_workflow_turn_state.record_context_enrichment(
+                        status="success",
+                        enhancer=enhancer_name,
+                        system_prompt_before=system_prompt_before_enrichment,
+                        system_prompt_after=system_prompt,
+                    )
+                    main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                    context.metadata["main_workflow"] = main_workflow_metadata
+            except Exception as exc:
+                if main_workflow_turn_state is not None:
+                    main_workflow_turn_state.record_context_enrichment(
+                        status="failed",
+                        enhancer=enhancer_name,
+                        system_prompt_before=system_prompt_before_enrichment,
+                        system_prompt_after=system_prompt_before_enrichment,
+                        errors=[f"{type(exc).__name__}: {exc}"],
+                    )
+                    main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                    context.metadata["main_workflow"] = main_workflow_metadata
+                raise
 
             if self.observability_provider and enhancement_span:
                 await self.observability_provider.end_span(enhancement_span)
@@ -734,9 +767,8 @@ class Agent:
                         "agent.llm_context.enhance_system_prompt.duration",
                         enhancement_span.duration_ms() or 0,
                         "ms",
-                        tags={"enhancer": self.llm_context_enhancer.__class__.__name__},
+                        tags={"enhancer": enhancer_name},
                     )
-
         if self.observability_provider and prompt_span:
             prompt_span.set_attribute(
                 "prompt_length", len(system_prompt) if system_prompt else 0
@@ -766,7 +798,20 @@ class Agent:
             metadata=llm_request_metadata,
         )
 
-        # Process with tool loop
+        # 기존 tool-calling loop(sql_processing subworkflow)를 wrapper로 감쌈
+        # tool-calling loop(sql_processing subworkflow) 실행
+        sql_processing_executor = SqlProcessingSubworkflowExecutor()
+        if main_workflow_turn_state is not None:
+            sql_processing_executor.start(
+                main_workflow_turn_state,
+                SqlProcessingInput(
+                    system_prompt=system_prompt,
+                    metadata=main_workflow_metadata or {},
+                ),
+            )
+            main_workflow_metadata = main_workflow_turn_state.to_metadata()
+            context.metadata["main_workflow"] = main_workflow_metadata
+
         tool_iterations = 0
 
         while tool_iterations < self.config.max_tool_iterations:
@@ -872,7 +917,7 @@ class Agent:
                         title=f"Executing {tool_call.name}",
                         status="running",
                         description=f"Running tool with {len(tool_call.arguments)} arguments",
-                        icon="?숋툘",
+                        icon="⚙️",
                         metadata=tool_call.arguments,
                     )
 
@@ -1014,7 +1059,7 @@ class Agent:
                             )
                         if sql_text is not None:
                             sql_text = str(sql_text)
-                        main_workflow_turn_state.record_sql_attempt(
+                        main_workflow_turn_state.record_sql_attempt( # run_sql attempts 기록
                             sql=sql_text,
                             status="success" if result.success else "failed",
                             error_message=None if result.success else result.error,
@@ -1027,9 +1072,9 @@ class Agent:
                         final_description = "Tool completed successfully"
                         if tool_call.name == "run_sql":
                             final_description += (
-                                "<br>Parameters??SQL? LLM???앹꽦???섏젙 ??"
-                                "SQL?대ŉ, ?ㅼ젣 ?ㅽ뻾 SQL? 寃利?怨쇱젙?먯꽌 "
-                                "蹂寃쎈맆 ???덉뒿?덈떎."
+                                "<br>Parameters의 SQL은 LLM이 생성한 수정 전 "
+                                "SQL이며, 실제 실행 SQL은 검증 과정에서 "
+                                "변경될 수 있습니다."
                             )
                     else:
                         final_description = (
@@ -1213,7 +1258,7 @@ class Agent:
             )
 
             # Provide detailed warning message to user
-            warning_message = f"""?좑툘 **Tool Execution Limit Reached**
+            warning_message = f"""⚠️ **Tool Execution Limit Reached**
 
 The agent stopped after executing {tool_iterations} tools (the configured maximum). The task may not be fully complete.
 
@@ -1238,6 +1283,17 @@ You can:
                     disabled=False,
                 )
             )
+
+        # tool-calling loop(sql_processing subworkflow)를 종료/기록
+        if main_workflow_turn_state is not None:
+            tool_limit_reached = tool_iterations >= self.config.max_tool_iterations
+            sql_processing_executor.finalize(
+                main_workflow_turn_state,
+                status="failed" if tool_limit_reached else "success",
+                errors=["max_tool_iterations exceeded"] if tool_limit_reached else None,
+            )
+            main_workflow_metadata = main_workflow_turn_state.to_metadata()
+            context.metadata["main_workflow"] = main_workflow_metadata
 
         # Save conversation if configured
         if self.config.auto_save_conversations:
@@ -1574,6 +1630,10 @@ You can:
                     )
 
         return response  #
+
+
+
+
 
 
 

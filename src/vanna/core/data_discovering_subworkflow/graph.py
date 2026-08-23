@@ -1,4 +1,4 @@
-﻿"""Graph and default nodes for Data-Discovering workflow."""
+"""Graph and default nodes for Data-Discovering workflow."""
 
 from __future__ import annotations
 
@@ -319,8 +319,9 @@ def build_data_discovering_subworkflow_executor(
     fewshot_limit: int = 3,
     max_steps: int = 5,
     retry_limit: int = 1,
-) -> DataDiscoverSubWorkflowExecutor:
-#    
+) -> "DataDiscoverSubWorkflowExecutor":
+    from .executor import DataDiscoverSubWorkflowExecutor
+
     return DataDiscoverSubWorkflowExecutor(
         build_data_discovering_graph(
             metadata_search_service=metadata_search_service,

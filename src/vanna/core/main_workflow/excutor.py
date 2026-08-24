@@ -1,9 +1,10 @@
-﻿"""MainWorkflow executor for turn state orchestration."""
+"""MainWorkflow executor for turn state orchestration."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,7 +35,25 @@ JSON_RETRY_FAILURE_TYPES = {
 
 FB2_DATA_DISCOVERY_FAILURE_TYPES = {"metadata_execution_error"}
 FB2_QUESTION_UNDERSTANDING_FAILURE_TYPES = {"metadata_semantic_mismatch"}
-TURNSTATE_LOG_DIR = Path(r"C:\Users\dlatn\GenSQL\gensql\scripts\turnstate")
+
+
+def _find_turnstate_log_dir() -> Path:
+    env_path = os.getenv("GENSQL_TURNSTATE_LOG_DIR")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    search_starts = [Path.cwd(), Path(__file__).resolve()]
+    for start in search_starts:
+        current = start if start.is_dir() else start.parent
+        for parent in [current, *current.parents]:
+            gensql_dir = parent / "gensql"
+            if gensql_dir.is_dir():
+                return gensql_dir / "scripts" / "turnstate"
+
+    return Path.cwd() / "gensql" / "scripts" / "turnstate"
+
+
+TURNSTATE_LOG_DIR = _find_turnstate_log_dir()
 
 
 def _safe_filename_part(value: str) -> str:

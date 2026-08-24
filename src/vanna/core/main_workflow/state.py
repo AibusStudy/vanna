@@ -16,12 +16,6 @@ MainWorkflowStage = Literal[
 ]
 SqlAttemptStatus = Literal["success", "failed"]
 
-_SUBFLOW_ALIASES = {
-    "pre_llm_workflow": "question_understanding",
-    "question_understanding_subworkflow": "question_understanding",
-    "sql_processing_agentic_subworkflow": "sql_processing",
-}
-
 
 @dataclass
 class FallbackState:

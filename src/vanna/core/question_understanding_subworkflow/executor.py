@@ -69,7 +69,7 @@ class QuestionUnderstandSubWorkflowExecutor:
                 attempts = state.retry.increment(current_node_id)
 
                 if attempts <= self.retry_limit:
-                    # conditional edge???곕Ⅸ node ?대룞
+                    # conditional edge
                     retry_edge = await self._select_next_edge(
                         state,
                         current_node_id,

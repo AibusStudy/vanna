@@ -19,7 +19,7 @@ sys.path.insert(0, str(TESTS_PATH))
 
 from vanna.core.question_understanding_subworkflow import QuestionUnderstandSubWorkflowExecutor, QuestUnderstand_Input
 
-from question_understanding_subworkflow_fakes.fake_graph import build_fake_pre_llm_graph
+from question_understanding_subworkflow_fakes.fake_graph import build_fake_question_understanding_subworkflow_graph
 
 
 async def main() -> None:
@@ -28,7 +28,7 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
 
-    graph = build_fake_pre_llm_graph(intent="sql")
+    graph = build_fake_question_understanding_subworkflow_graph(intent="sql")
     executor = QuestionUnderstandSubWorkflowExecutor(graph, max_steps=10, retry_limit=1)
 
     result = await executor.run(

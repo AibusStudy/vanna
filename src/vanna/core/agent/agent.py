@@ -784,7 +784,7 @@ class Agent:
         attach_question_metadata = getattr(
             self.config,
             "attach_question_understanding_subworkflow_metadata",
-            getattr(self.config, "attach_pre_llm_workflow_metadata", False),
+            getattr(self.config, "attach_question_understanding_subworkflow_metadata", False),
         )
         if attach_question_metadata and workflow_metadata is not None:
             llm_request_metadata["question_understanding"] = workflow_metadata

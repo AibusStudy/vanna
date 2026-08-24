@@ -31,7 +31,7 @@ from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
     QuestUnderstand_State,
 )
-from question_understanding_subworkflow_fakes.fake_graph import build_fake_pre_llm_graph
+from question_understanding_subworkflow_fakes.fake_graph import build_fake_question_understanding_subworkflow_graph
 
 
 class AlwaysRetryNode:
@@ -124,7 +124,7 @@ def build_input(message: str = "Show me sales by day for this week") -> QuestUnd
 
 @pytest.mark.asyncio
 async def test_fake_sql_workflow_reaches_structured_result() -> None:
-    graph = build_fake_pre_llm_graph(intent="sql")
+    graph = build_fake_question_understanding_subworkflow_graph(intent="sql")
     executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     result = await executor.run(build_input())
@@ -138,7 +138,7 @@ async def test_fake_sql_workflow_reaches_structured_result() -> None:
 
 @pytest.mark.asyncio
 async def test_fake_general_workflow_is_skipped() -> None:
-    graph = build_fake_pre_llm_graph(intent="general")
+    graph = build_fake_question_understanding_subworkflow_graph(intent="general")
     executor = QuestionUnderstandSubWorkflowExecutor(graph)
 
     result = await executor.run(build_input("hello"))

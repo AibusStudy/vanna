@@ -6,12 +6,7 @@ import json
 import logging
 from typing import Any
 
-try:
-    from vanna.core.question_understanding_subworkflow import (
-        QuestUnderstand_Input as QuestionUnderstandingInput,
-    )
-except ImportError:
-    from vanna.core.pre_llm_workflow import WorkflowInput as QuestionUnderstandingInput
+from vanna.core.question_understanding_subworkflow import QuestUnderstand_Input
 
 try:
     from vanna.core.data_discovering_subworkflow import DataDiscover_Input
@@ -38,12 +33,26 @@ JSON_RETRY_FAILURE_TYPES = {
 FB2_DATA_DISCOVERY_FAILURE_TYPES = {"metadata_execution_error"}
 FB2_QUESTION_UNDERSTANDING_FAILURE_TYPES = {"metadata_semantic_mismatch"}
 
-
+# intent == sql
 def _log_turn_state(event: str, state: MainWorkflowTurnState) -> None:
     logger.info(
         "[main_workflow.turn_state] %s\n%s",
         event,
         json.dumps(state.to_metadata(), ensure_ascii=False, indent=2),
+    )
+
+# intent != sql
+def _log_turn_state_summary(event: str, state: MainWorkflowTurnState) -> None:
+    logger.info(
+        "[main_workflow.turn_state] %s turn_id=%s stage=%s operation=%s "
+        "intent=%s question_understanding=%s data_discovery=%s",
+        event,
+        state.turn_id,
+        state.stage,
+        state.operation,
+        state.structured_question.get("intent"),
+        state.subflow("question_understanding").status,
+        state.subflow("data_discovery").status,
     )
 
 
@@ -77,17 +86,35 @@ class MainWorkflowExecutor:
         await self._run_question_understanding_with_fb1(input, state)
         _log_turn_state("question_understanding_saved", state)
 
+        is_non_sql_intent = self._is_non_sql_intent(state)
         if self._should_run_data_discovery(state):
             await self._run_data_discovery_with_fb2(input, state)
+            _log_turn_state("data_discovery_saved", state)
         else:
             state.subflow("data_discovery").status = "skipped"
-        _log_turn_state("data_discovery_saved", state)
+            if is_non_sql_intent:
+                _log_turn_state_summary("data_discovery_skipped", state)
+            else:
+                _log_turn_state("data_discovery_saved", state)
 
         state.stage = "context_enrichment"
         if state.operation not in {"clarification_required", "continue_with_warning"}:
             state.operation = "context_enrichment_ready"
-        _log_turn_state("context_enrichment_ready", state)
+        if is_non_sql_intent:
+            _log_turn_state_summary("context_enrichment_ready", state)
+        else:
+            _log_turn_state("context_enrichment_ready", state)
         return state
+
+    @staticmethod
+    def _is_non_sql_intent(state: MainWorkflowTurnState) -> bool:
+        question_subflow = state.subflow("question_understanding")
+        intent = state.structured_question.get("intent")
+        return (
+            question_subflow.status == "success"
+            and isinstance(intent, str)
+            and intent != "sql"
+        )
 
     async def _run_question_understanding_with_fb1(
         self,
@@ -130,7 +157,7 @@ class MainWorkflowExecutor:
             return {"status": "skipped"}
 
         try:
-            workflow_input = QuestionUnderstandingInput(
+            workflow_input = QuestUnderstand_Input(
                 user_id=input.user_id,
                 conversation_id=input.conversation_id,
                 request_id=input.request_id,
@@ -372,9 +399,9 @@ class MainWorkflowExecutor:
         )
         state.result["message"] = (
             f"{warning}\n"
-            "???먮윭濡??명빐 metadata 寃?됱쓣 ?꾨즺?섏? 紐삵뻽?? "
-            "SQL???앹꽦?섍린 ?꾩뿉 search_business_metadata tool???ъ슜??"
-            "?꾩껜 table metadata? column metadata瑜??ㅼ떆 寃?됲븯??"
+            "위 에러로 인해 metadata 검색을 완료하지 못했습니다.\n"
+            "SQL을 생성하기 전에 search_business_metadata tool을 사용해 "
+            "전체 table metadata와 column metadata를 다시 검색하세요."
         )
         state.operation = "continue_with_warning"
         state.subflow("data_discovery").status = "success"
@@ -392,9 +419,10 @@ class MainWorkflowExecutor:
         error_text = "\n".join(str(error) for error in errors) or failure_type
         state.operation = "clarification_required"
         state.result["message"] = (
-            f"{failed_subflow}??{failed_node_id}?먯꽌 {failure_type} ?ㅻ쪟媛 諛쒖깮?덈떎.\n"
-            f"?먯씤: {error_text}\n"
-            "?ъ슜?먯뿉寃??대뼡 議곌굔, 吏?? ?뚯씠釉?而щ읆 ?먮뒗 ?쒓컙 踰붿쐞媛 ?꾩슂?쒖? 紐낇솗???ъ쭏臾명븯??"
+            f"{failed_subflow}의 {failed_node_id}에서 {failure_type} 오류가 발생했습니다.\n"
+            f"원인: {error_text}\n"
+            "사용자에게 어떤 조건, 지표, 테이블/컬럼 또는 시간 범위가 필요한지 "
+            "명확히 재질문하세요."
         )
 
     @staticmethod

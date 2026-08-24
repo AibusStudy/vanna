@@ -14,7 +14,7 @@ from .fake_nodes import (
 )
 
 
-def build_fake_pre_llm_graph(intent: str = "sql") -> WorkflowGraph:
+def build_fake_question_understanding_subworkflow_graph(intent: str = "sql") -> WorkflowGraph:
     graph = WorkflowGraph()
 
     graph.add_node(FakeIntentNode(intent=intent), start=True)

@@ -1059,11 +1059,20 @@ class Agent:
                             )
                         if sql_text is not None:
                             sql_text = str(sql_text)
-                        main_workflow_turn_state.record_sql_attempt( # run_sql attempts 기록
+
+                        # SQL 실행 성공·실패 기록
+                        attempt = main_workflow_turn_state.record_sql_attempt(
                             sql=sql_text,
                             status="success" if result.success else "failed",
                             error_message=None if result.success else result.error,
                         )
+
+                        # SQL 실행 결과를 attempt로 기록하고, 실패 시 재생성 단계로 전환
+                        if attempt.status == "failed":
+                            main_workflow_turn_state.stage = "sql_regeneration"
+                            main_workflow_turn_state.operation = "sql_regeneration"
+
+                        
                         main_workflow_metadata = main_workflow_turn_state.to_metadata()
                         context.metadata["main_workflow"] = main_workflow_metadata
                     # Update status card to show completion

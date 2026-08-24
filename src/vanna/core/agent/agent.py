@@ -39,10 +39,7 @@ from vanna.core.sql_processing_agentic_subworkflow import (
     SqlProcessingSubworkflowExecutor,
 )
 from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
-from vanna.core.question_understanding_subworkflow import (
-    QuestionUnderstandSubWorkflowExecutor,
-    QuestUnderstand_FinalResult,
-)
+
 from vanna.core.recovery import ErrorRecoveryStrategy, RecoveryActionType
 from vanna.core.enricher import ToolContextEnricher
 from vanna.core.enhancer import LlmContextEnhancer, DefaultLlmContextEnhancer
@@ -109,8 +106,6 @@ class Agent:
         observability_provider: Optional[ObservabilityProvider] = None,
         audit_logger: Optional[AuditLogger] = None,
         main_workflow_executor: Optional[MainWorkflowExecutor] = None,
-        main_workflow_excutor: Optional[MainWorkflowExecutor] = None,
-        question_understanding_subworkflow_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
     ):
         self.llm_service = llm_service
         self.tool_registry = tool_registry
@@ -145,16 +140,9 @@ class Agent:
         self.conversation_filters = conversation_filters
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
-        self.main_workflow_executor = main_workflow_executor or main_workflow_excutor
 
-        # question_understanding_subworkflow 관련 agent.config.py 적용부분
-        # max_steps와 retry_limit 적용
-        self.question_understanding_subworkflow_executor = question_understanding_subworkflow_executor
-        if isinstance(self.question_understanding_subworkflow_executor, QuestionUnderstandSubWorkflowExecutor):
-            self.question_understanding_subworkflow_executor.max_steps = self.config.max_workflow_steps
-            self.question_understanding_subworkflow_executor.retry_limit = (
-                self.config.workflow_retry_limit
-            )
+        # main_workflow executor 적용
+        self.main_workflow_executor = main_workflow_executor
 
         # Wire audit logger into tool registry
         if self.audit_logger and self.config.audit_config.enabled:
@@ -627,7 +615,6 @@ class Agent:
 
         # main_workflow
         # system prompt build 이후 ~ enhance 전에 실행
-        workflow_result: Optional[QuestUnderstand_FinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
         main_workflow_turn_state = None
         main_workflow_metadata: Optional[Dict[str, Any]] = None
@@ -727,16 +714,14 @@ class Agent:
                         system_prompt,
                         message,
                         user,
-                        workflow_result,
                         workflow_state=main_workflow_turn_state,
                         workflow_metadata=main_workflow_metadata,
                     )
                 except TypeError:
-                    system_prompt = await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
+                    system_prompt = await self.llm_context_enhancer.enhance_system_prompt(
                         system_prompt,
                         message,
                         user,
-                        workflow_result,
                     )
                 if main_workflow_turn_state is not None:
                     main_workflow_turn_state.record_context_enrichment(
@@ -783,14 +768,19 @@ class Agent:
 
         # Build LLM request
         llm_request_metadata: Dict[str, Any] = {}
+        attach_main_workflow_metadata = getattr(
+            self.config,
+            "attach_main_workflow_metadata",
+            True,
+        )
         attach_question_metadata = getattr(
             self.config,
             "attach_question_understanding_subworkflow_metadata",
-            getattr(self.config, "attach_question_understanding_subworkflow_metadata", False),
+            False,
         )
         if attach_question_metadata and workflow_metadata is not None:
             llm_request_metadata["question_understanding"] = workflow_metadata
-        if main_workflow_metadata is not None:
+        if attach_main_workflow_metadata and main_workflow_metadata is not None:
             llm_request_metadata["main_workflow"] = main_workflow_metadata
         request = await self._build_llm_request(
             conversation,
@@ -1069,7 +1059,7 @@ class Agent:
                         if sql_text is not None:
                             sql_text = str(sql_text)
                         main_workflow_turn_state.record_selected_metadata_from_sql(sql_text)
-                        main_workflow_turn_state.record_sql_attempt( # run_sql attempts 기록
+                        main_workflow_turn_state.record_sql_attempt( # run_sql attempts 湲곕줉
                             sql=sql_text,
                             status="success" if result.success else "failed",
                             error_message=None if result.success else result.error,
@@ -1645,3 +1635,4 @@ You can:
                     )
 
         return response  #
+

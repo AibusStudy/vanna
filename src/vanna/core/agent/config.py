@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent configuration.
 
 This module contains configuration models that control agent behavior.
@@ -122,9 +122,16 @@ class AgentConfig(BaseModel):
     ui_features: UiFeatures = Field(default_factory=UiFeatures)
     audit_config: AuditConfig = Field(default_factory=AuditConfig)
 
-    # Question-Understanding workflow
-    enable_question_understanding_subworkflow: bool = Field(default=False)
+    # Main workflow
+    # LLM request metadata에 mainworkflow 결과 붙일지, 저장 정책 필요할떄 사용
     max_workflow_steps: int = Field(default=10, gt=0)
     workflow_retry_limit: int = Field(default=1, ge=0)
-    attach_question_understanding_subworkflow_metadata: bool = Field(default=True)
-    persist_question_understanding_subworkflow_metadata: bool = Field(default=False)
+    attach_main_workflow_metadata: bool = Field(default=True)
+    persist_main_workflow_metadata: bool = Field(default=False)
+
+    # Backward-compatible question-understanding metadata flags.
+    # 기존 Pre-LLM에 사용하던 필드로 추후 삭제 예정
+    # enable_question_understanding_subworkflow: bool = Field(default=False)
+    # attach_question_understanding_subworkflow_metadata: bool = Field(default=True)
+    # persist_question_understanding_subworkflow_metadata: bool = Field(default=False)
+

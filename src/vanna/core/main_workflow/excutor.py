@@ -7,12 +7,20 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-from vanna.core.question_understanding_subworkflow import QuestUnderstand_Input
+from vanna.core.question_understanding_subworkflow import (
+    QuestUnderstand_Input,
+    QuestionUnderstandSubWorkflowExecutor,
+    QuestUnderstand_FinalResult,
+)
+
 
 try:
-    from vanna.core.data_discovering_subworkflow import DataDiscover_Input
+    from vanna.core.data_discovering_subworkflow import (
+        DataDiscover_Input,
+        DataDiscoverSubWorkflowExecutor,
+    )
 except ImportError:
     DataDiscover_Input = None
 
@@ -116,24 +124,46 @@ def _log_turn_state_summary(event: str, state: MainWorkflowTurnState) -> None:
 
 
 class MainWorkflowExecutor:
-    """Runs pre-LLM subflows and records normalized turn state."""
+    """Runs Main workflows and records normalized turn state."""
 
     def __init__(
         self,
-        question_understanding_executor=None,
-        data_discovery_executor=None,
+        question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
+        data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
-        question_understanding_subworkflow_executor=None,
-        pre_llm_workflow_executor=None,
+        max_workflow_steps: int = 10,
+        workflow_retry_limit: int = 1,
         **_: Any,
     ):
-        self.question_understanding_executor = (
-            question_understanding_executor
-            or question_understanding_subworkflow_executor
-            or pre_llm_workflow_executor
-        )
+        # question_understanding_subworkflow 관련 agent.config.py 적용부분
+        # max_steps와 retry_limit 적용
+        self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
+
+        self._apply_subworkflow_limits(
+            self.question_understanding_executor,
+            max_steps=max_workflow_steps,
+            retry_limit=workflow_retry_limit,
+        )
+        self._apply_subworkflow_limits(
+            self.data_discovery_executor,
+            max_steps=max_workflow_steps,
+            retry_limit=workflow_retry_limit,
+        )
+
+    @staticmethod
+    def _apply_subworkflow_limits(
+        executor,
+        *,
+        max_steps: int,
+        retry_limit: int,
+    ) -> None:
+        if hasattr(executor, "max_steps"):
+            executor.max_steps = max_steps
+        if hasattr(executor, "retry_limit"):
+            executor.retry_limit = retry_limit
+
 
     async def run(self, input: MainWorkflowInput) -> MainWorkflowTurnState:
         state = MainWorkflowTurnState(

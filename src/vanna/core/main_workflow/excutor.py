@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from vanna.core.question_understanding_subworkflow import QuestUnderstand_Input
@@ -32,20 +34,40 @@ JSON_RETRY_FAILURE_TYPES = {
 
 FB2_DATA_DISCOVERY_FAILURE_TYPES = {"metadata_execution_error"}
 FB2_QUESTION_UNDERSTANDING_FAILURE_TYPES = {"metadata_semantic_mismatch"}
+TURNSTATE_LOG_DIR = Path(r"C:\Users\dlatn\GenSQL\gensql\scripts\turnstate")
+
+
+def _safe_filename_part(value: str) -> str:
+    return "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in value)
+
+
+def _write_turn_state_file(event: str, state: MainWorkflowTurnState) -> Path | None:
+    try:
+        TURNSTATE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        event_name = _safe_filename_part(event)[:80]
+        turn_id = _safe_filename_part(state.turn_id)[:80]
+        path = TURNSTATE_LOG_DIR / f"{timestamp}_{event_name}_{turn_id}.json"
+        payload = {
+            "event": event,
+            "timestamp": timestamp,
+            "turn_state": state.to_metadata(),
+        }
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return path
+    except Exception:
+        logger.exception("[main_workflow.turn_state] failed_to_write_file event=%s", event)
+        return None
 
 # intent == sql
 def _log_turn_state(event: str, state: MainWorkflowTurnState) -> None:
-    logger.info(
-        "[main_workflow.turn_state] %s\n%s",
-        event,
-        json.dumps(state.to_metadata(), ensure_ascii=False, indent=2),
-    )
-
-# intent != sql
-def _log_turn_state_summary(event: str, state: MainWorkflowTurnState) -> None:
+    file_path = _write_turn_state_file(event, state)
     logger.info(
         "[main_workflow.turn_state] %s turn_id=%s stage=%s operation=%s "
-        "intent=%s question_understanding=%s data_discovery=%s",
+        "intent=%s question_understanding=%s data_discovery=%s sql_processing=%s file=%s",
         event,
         state.turn_id,
         state.stage,
@@ -53,6 +75,24 @@ def _log_turn_state_summary(event: str, state: MainWorkflowTurnState) -> None:
         state.structured_question.get("intent"),
         state.subflow("question_understanding").status,
         state.subflow("data_discovery").status,
+        state.subflow("sql_processing").status,
+        str(file_path) if file_path is not None else None,
+    )
+
+# intent != sql
+def _log_turn_state_summary(event: str, state: MainWorkflowTurnState) -> None:
+    file_path = _write_turn_state_file(event, state)
+    logger.info(
+        "[main_workflow.turn_state] %s turn_id=%s stage=%s operation=%s "
+        "intent=%s question_understanding=%s data_discovery=%s file=%s",
+        event,
+        state.turn_id,
+        state.stage,
+        state.operation,
+        state.structured_question.get("intent"),
+        state.subflow("question_understanding").status,
+        state.subflow("data_discovery").status,
+        str(file_path) if file_path is not None else None,
     )
 
 

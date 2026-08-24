@@ -1051,14 +1051,21 @@ class Agent:
                     if main_workflow_turn_state is not None and tool_call.name == "run_sql":
                         tool_arguments = tool_call.arguments or {}
                         sql_text = None
+                        result_metadata = (
+                            result.metadata if isinstance(result.metadata, dict) else {}
+                        )
+                        executed_sql = result_metadata.get("executed_sql")
+                        if executed_sql is not None:
+                            sql_text = executed_sql
                         if isinstance(tool_arguments, dict):
-                            sql_text = (
-                                tool_arguments.get("sql")
-                                or tool_arguments.get("query")
-                                or tool_arguments.get("statement")
-                            )
+                            sql_text = sql_text or (
+                                    tool_arguments.get("sql")
+                                    or tool_arguments.get("query")
+                                    or tool_arguments.get("statement")
+                                )
                         if sql_text is not None:
                             sql_text = str(sql_text)
+                        main_workflow_turn_state.record_selected_metadata_from_sql(sql_text)
                         main_workflow_turn_state.record_sql_attempt( # run_sql attempts 기록
                             sql=sql_text,
                             status="success" if result.success else "failed",
@@ -1630,12 +1637,3 @@ You can:
                     )
 
         return response  #
-
-
-
-
-
-
-
-
-

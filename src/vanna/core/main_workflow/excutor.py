@@ -215,6 +215,7 @@ class MainWorkflowExecutor:
 
             structured_output = result_metadata.get("structured_output")
             state.structured_question = structured_output if isinstance(structured_output, dict) else {}
+            state.metadata["searches"] = self._extract_searches(state.structured_question)
             _log_turn_state("structured_question_assigned", state)
 
             subflow_state.status = result_metadata.get("status", "success")
@@ -413,9 +414,12 @@ class MainWorkflowExecutor:
         fewshot_output = result_metadata.get("fewshot_output")
 
         state.metadata = {
-            "searches": self._extract_searches(state.structured_question),
+            "searches": list(
+                state.metadata.get("searches")
+                or self._extract_searches(state.structured_question)
+            ),
             "candidates": self._extract_metadata_candidates(metadata_output),
-            "selected": [],
+            "selected": list(state.metadata.get("selected", [])),
         }
         state.fewshot = self._extract_fewshot_examples(fewshot_output)
 

@@ -244,3 +244,168 @@ class MainWorkflowTurnState:
             "attempts": [attempt.to_metadata() for attempt in self.attempts],
             "result": dict(self.result),
         }
+    ## 메타데이터 검색 결과 병합
+    def add_metadata_search_result(
+        self,
+        *,
+        searches: list[dict[str, Any]],
+        candidates: list[dict[str, Any]],
+    ) -> None:
+        existing_searches = self.metadata.setdefault(
+            "searches",
+            [],
+        )
+        existing_candidates = self.metadata.setdefault(
+            "candidates",
+            [],
+        )
+
+        existing_search_keys = {
+            (
+                item.get("query"),
+                item.get("scope"),
+            )
+            for item in existing_searches
+            if isinstance(item, dict)
+        }
+        
+        for search in searches:
+            if not isinstance(search, dict):
+                continue
+
+            search_key = (
+                search.get("query"),
+                search.get("scope"),
+            )
+
+            if search_key in existing_search_keys:
+                continue
+
+            existing_searches.append(dict(search))
+            existing_search_keys.add(search_key)
+
+        candidate_index = {
+            self._metadata_candidate_key(candidate): index
+            for index, candidate in enumerate(
+                existing_candidates
+            )
+            if isinstance(candidate, dict)
+        }
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+
+            candidate_key = self._metadata_candidate_key(
+                candidate
+            )
+
+            if candidate_key is None:
+                continue
+
+            existing_index = candidate_index.get(
+                candidate_key
+            )
+
+            if existing_index is None:
+                existing_candidates.append(
+                    dict(candidate)
+                )
+                candidate_index[candidate_key] = (
+                    len(existing_candidates) - 1
+                )
+                continue
+
+            existing = existing_candidates[existing_index]
+
+            # 새 검색에서 추가된 정보가 있으면 기존 후보를 보강
+            existing.update(
+                {
+                    key: value
+                    for key, value in candidate.items()
+                    if value is not None
+                }
+            )
+            
+    ## 메타데이터 중복 판별 키
+    @staticmethod
+    def _metadata_candidate_key(
+        candidate: dict[str, Any],
+    ) -> tuple[Any, ...] | None:
+        candidate_type = candidate.get("type")
+
+        if candidate_type == "table":
+            table_name = candidate.get("table_name")
+            if not table_name:
+                return None
+
+            return (
+                "table",
+                table_name,
+            )
+
+        if candidate_type == "column":
+            table_name = candidate.get("table_name")
+            column_name = candidate.get("column_name")
+
+            if not table_name or not column_name:
+                return None
+
+            return (
+                "column",
+                table_name,
+                column_name,
+            )
+
+        return None
+    
+    ## few shot 저장
+    def add_fewshot_results(
+        self,
+        examples: list[dict[str, Any]],
+    ) -> None:
+        existing_keys = {
+            self._fewshot_key(example)
+            for example in self.fewshot
+            if isinstance(example, dict)
+        }
+
+        for example in examples:
+            if not isinstance(example, dict):
+                continue
+
+            example_key = self._fewshot_key(example)
+
+            if example_key is None:
+                continue
+
+            if example_key in existing_keys:
+                continue
+
+            self.fewshot.append(dict(example))
+            existing_keys.add(example_key)
+    ## few shot 중복 식별키
+    # 현재 질문과 sql 쌍으로 존재
+    # 향후 번호 등을 활용해서 더 간단한 방법으로 중복 거르는 방법에 대해 찾아야함
+    @staticmethod
+    def _fewshot_key(
+        example: dict[str, Any],
+    ) -> tuple[str, str] | None:
+        question = example.get("question")
+        args = example.get("args")
+
+        if not isinstance(question, str):
+            return None
+
+        if not isinstance(args, dict):
+            return None
+
+        sql = args.get("sql")
+
+        if not isinstance(sql, str):
+            return None
+
+        return (
+            question.strip(),
+            sql.strip(),
+        )

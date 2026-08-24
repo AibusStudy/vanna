@@ -33,7 +33,7 @@ from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.core.lifecycle import LifecycleHook
 from vanna.core.middleware import LlmMiddleware
 from vanna.core.main_workflow.state import MainWorkflowInput
-from vanna.core.main_workflow.excutor import MainWorkflowExecutor
+from vanna.core.main_workflow.excutor import MainWorkflowExecutor, _log_turn_state
 from vanna.core.sql_processing_agentic_subworkflow import (
     SqlProcessingInput,
     SqlProcessingSubworkflowExecutor,
@@ -747,6 +747,7 @@ class Agent:
                     )
                     main_workflow_metadata = main_workflow_turn_state.to_metadata()
                     context.metadata["main_workflow"] = main_workflow_metadata
+                    _log_turn_state("context_enrichment_saved", main_workflow_turn_state)
             except Exception as exc:
                 if main_workflow_turn_state is not None:
                     main_workflow_turn_state.record_context_enrichment(
@@ -758,6 +759,7 @@ class Agent:
                     )
                     main_workflow_metadata = main_workflow_turn_state.to_metadata()
                     context.metadata["main_workflow"] = main_workflow_metadata
+                    _log_turn_state("context_enrichment_failed", main_workflow_turn_state)
                 raise
 
             if self.observability_provider and enhancement_span:
@@ -811,6 +813,7 @@ class Agent:
             )
             main_workflow_metadata = main_workflow_turn_state.to_metadata()
             context.metadata["main_workflow"] = main_workflow_metadata
+            _log_turn_state("sql_processing_started", main_workflow_turn_state)
 
         tool_iterations = 0
 
@@ -1073,6 +1076,10 @@ class Agent:
                         )
                         main_workflow_metadata = main_workflow_turn_state.to_metadata()
                         context.metadata["main_workflow"] = main_workflow_metadata
+                        _log_turn_state(
+                            "sql_processing_attempt_recorded",
+                            main_workflow_turn_state,
+                        )
                     # Update status card to show completion
                     final_status = "success" if result.success else "error"
                     if result.success:
@@ -1301,6 +1308,7 @@ You can:
             )
             main_workflow_metadata = main_workflow_turn_state.to_metadata()
             context.metadata["main_workflow"] = main_workflow_metadata
+            _log_turn_state("sql_processing_finalized", main_workflow_turn_state)
 
         # Save conversation if configured
         if self.config.auto_save_conversations:

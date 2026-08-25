@@ -14,8 +14,8 @@ class SqlProcessingSubworkflowExecutor:
     """
 
     def start(self, turn_state: Any, input: SqlProcessingInput) -> None:
-        turn_state.stage = "sql_processing"
-        turn_state.operation = "sql_processing_agentic_loop_running"
+        turn_state.stage = "sql_generation"
+        turn_state.operation = "sql_generation"
         subflow = turn_state.subflow("sql_processing")
         subflow.status = "success"
         subflow.current_node = "agent_llm_tool_loop"

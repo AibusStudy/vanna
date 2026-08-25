@@ -190,6 +190,29 @@ class SearchSavedCorrectToolUsesTool(Tool[SearchSavedCorrectToolUsesParams]):
                     ui_component=ui_component,
                 )
 
+            # TurnState 저장에 사용할 구조화된 few-shot 결과
+            fewshot_results = []
+
+            for search_result in results:
+                memory = search_result.memory
+                memory_args = (
+                    memory.args
+                    if isinstance(memory.args, dict)
+                    else {}
+                )
+
+                fewshot_results.append(
+                    {
+                        "similarity": (
+                            search_result.similarity_score
+                        ),
+                        "question": memory.question,
+                        "tool_name": memory.tool_name,
+                        "args": dict(memory_args),
+                    }
+                )
+
+
             # Format results for LLM
             results_text = f"Found {len(results)} similar tool usage pattern(s):\n\n"
             for i, result in enumerate(results, 1):
@@ -249,6 +272,9 @@ class SearchSavedCorrectToolUsesTool(Tool[SearchSavedCorrectToolUsesParams]):
                 success=True,
                 result_for_llm=results_text.strip(),
                 ui_component=ui_component,
+                metadata={
+                    "fewshot": fewshot_results,
+                },
             )
 
         except Exception as e:

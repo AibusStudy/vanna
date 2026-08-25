@@ -12,9 +12,7 @@ from typing import Any, Optional
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
     QuestionUnderstandSubWorkflowExecutor,
-    QuestUnderstand_FinalResult,
 )
-
 
 try:
     from vanna.core.data_discovering_subworkflow import (
@@ -135,8 +133,7 @@ class MainWorkflowExecutor:
         workflow_retry_limit: int = 1,
         **_: Any,
     ):
-        # question_understanding_subworkflow 관련 agent.config.py 적용부분
-        # max_steps와 retry_limit 적용
+
         self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
@@ -260,6 +257,7 @@ class MainWorkflowExecutor:
                 },
             )
             result = await self.question_understanding_executor.run(workflow_input)
+            self._collect_ui_component(state, result)
             result_metadata = self._to_metadata(result)
 
             structured_output = result_metadata.get("structured_output")
@@ -386,6 +384,7 @@ class MainWorkflowExecutor:
                 structured_output_override=structured_output_override,
             )
             result = await self._run_data_discovery_executor(workflow_input, input, state)
+            self._collect_ui_component(state, result)
             result_metadata = self._to_metadata(result)
 
             self._apply_data_discovery_result(state, result_metadata)
@@ -493,11 +492,18 @@ class MainWorkflowExecutor:
         state.result["message"] = (
             f"{warning}\n"
             "위 에러로 인해 metadata 검색을 완료하지 못했습니다.\n"
-            "SQL을 생성하기 전에 search_business_metadata tool을 사용해 "
-            "전체 table metadata와 column metadata를 다시 검색하세요."
+            "[필수 규칙] run_sql을 호출하기 전에 반드시 search_business_metadata tool을 먼저 호출해 "
+            "전체 table metadata와 column metadata를 다시 검색하세요. "
+            "이 규칙을 만족하기 전에는 SQL 생성/검증/실행을 진행하면 안 됩니다."
         )
         state.operation = "continue_with_warning"
         state.subflow("data_discovery").status = "success"
+
+    @staticmethod
+    def _collect_ui_component(state: MainWorkflowTurnState, result: Any) -> None:
+        ui_component = getattr(result, "ui_component", None)
+        if ui_component is not None:
+            state.ui_components.append(ui_component)
 
     def _assign_clarification_result(
         self,

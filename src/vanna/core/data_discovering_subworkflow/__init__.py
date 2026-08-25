@@ -3,8 +3,11 @@
 from .edge import EdgeCondition, DataDiscover_Edge
 from .executor import DataDiscoverSubWorkflowExecutor
 from .graph import (
+    AgenticMetadataSearchNode,
+    DataDiscoveryRouterNode,
     FewShotSearchNode,
     MetadataSearchNode,
+    SearchPlanCondition,
     WorkflowGraph,
     WorkflowGraphError,
     build_data_discovering_graph,
@@ -28,7 +31,10 @@ __all__ = [
     "DataDiscoverSubWorkflowExecutor",
     "WorkflowGraph",
     "WorkflowGraphError",
+    "DataDiscoveryRouterNode",
+    "SearchPlanCondition",
     "MetadataSearchNode",
+    "AgenticMetadataSearchNode",
     "FewShotSearchNode",
     "build_data_discovering_graph",
     "build_data_discovering_subworkflow_executor",

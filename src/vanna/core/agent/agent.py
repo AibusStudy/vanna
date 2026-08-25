@@ -695,6 +695,8 @@ class Agent:
                 # MainWorkflow owns turn/subworkflow state only.
                 # The existing Agent LLM/tool loop below remains responsible for
                 # producing the final assistant response.
+                for ui_component in getattr(main_workflow_turn_state, "ui_components", []):
+                    yield ui_component
         # Agent no longer runs it as a separate branch.
 
         # Enhancer가 SQL 생성용 context를 구성할 수 있도록 다음 실행 단계를 SQL 생성으로 전환

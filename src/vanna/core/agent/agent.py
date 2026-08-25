@@ -1215,7 +1215,8 @@ class Agent:
                             main_workflow_turn_state.stage = "sql_regeneration"
                             main_workflow_turn_state.operation = "sql_regeneration"
 
-                        
+                            workflow_context_refresh_required = True
+
                         main_workflow_metadata = main_workflow_turn_state.to_metadata()
                         context.metadata["main_workflow"] = main_workflow_metadata
                         _log_turn_state(

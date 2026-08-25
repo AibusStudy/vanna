@@ -1040,6 +1040,9 @@ class Agent:
                                         "tool": tool_call.name,
                                     },
                                 )
+                    # state 변화 확인
+                    state_changed = False
+                    
                     ## 메타 데이터 저장
                     if (
                         main_workflow_turn_state is not None
@@ -1109,6 +1112,8 @@ class Agent:
                             candidates=candidates,
                         )
 
+                        state_changed = True
+
                         if (
                             main_workflow_turn_state.stage
                             == "sql_regeneration"
@@ -1116,6 +1121,7 @@ class Agent:
                             main_workflow_turn_state.operation = (
                                 "metadata_search"
                             )
+                            
                     ## Few shot 저장
                     if (
                         main_workflow_turn_state is not None
@@ -1124,12 +1130,14 @@ class Agent:
                         == "search_saved_correct_tool_uses"
                     ):
                         tool_metadata = result.metadata or {}
-                        examples = tool_metadata.get("examples", [])
+                        fewshot_results = tool_metadata.get("fewshot", [])
 
-                        if isinstance(examples, list):
+                        if isinstance(fewshot_results, list):
                             main_workflow_turn_state.add_fewshot_results(
-                                examples
+                                fewshot_results
                             )
+
+                        state_changed = True
 
                         if (
                             main_workflow_turn_state.stage
@@ -1138,6 +1146,14 @@ class Agent:
                             main_workflow_turn_state.operation = (
                                 "fewshot_search"
                             ) 
+                    
+                    if state_changed:
+                        main_workflow_metadata = (
+                            main_workflow_turn_state.to_metadata()
+                        )
+                        context.metadata["main_workflow"] = (
+                            main_workflow_metadata
+                        )
                     
                     if main_workflow_turn_state is not None and tool_call.name == "run_sql":
                         tool_arguments = tool_call.arguments or {}

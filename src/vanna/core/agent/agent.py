@@ -1047,7 +1047,105 @@ class Agent:
                                         "tool": tool_call.name,
                                     },
                                 )
+                    ## 메타 데이터 저장
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name
+                        == "search_business_metadata"
+                    ):
+                        tool_metadata = result.metadata or {}
 
+                        searches: list[dict[str, Any]] = []
+
+                        if tool_metadata.get("mode") == "multi_query":
+                            query_results = tool_metadata.get(
+                                "query_results",
+                                [],
+                            )
+
+                            if isinstance(query_results, list):
+                                searches = [
+                                    {
+                                        "query_id": item.get("query_id"),
+                                        "query": item.get("query"),
+                                        "scope": item.get("scope"),
+                                    }
+                                    for item in query_results
+                                    if isinstance(item, dict)
+                                ]
+
+                        elif tool_metadata.get("mode") == "agentic":
+                            searches = [
+                                {
+                                    "query": tool_metadata.get("query"),
+                                    "scope": tool_metadata.get("scope"),
+                                }
+                            ]
+
+                        tables = tool_metadata.get("tables", [])
+                        columns = tool_metadata.get("columns", [])
+
+                        tables = tables if isinstance(tables, list) else []
+                        columns = (
+                            columns
+                            if isinstance(columns, list)
+                            else []
+                        )
+
+                        candidates = [
+                            {
+                                **candidate,
+                                "type": "table",
+                            }
+                            for candidate in tables
+                            if isinstance(candidate, dict)
+                        ]
+
+                        candidates.extend(
+                            {
+                                **candidate,
+                                "type": "column",
+                            }
+                            for candidate in columns
+                            if isinstance(candidate, dict)
+                        )
+
+                        main_workflow_turn_state.add_metadata_search_result(
+                            searches=searches,
+                            candidates=candidates,
+                        )
+
+                        if (
+                            main_workflow_turn_state.stage
+                            == "sql_regeneration"
+                        ):
+                            main_workflow_turn_state.operation = (
+                                "metadata_search"
+                            )
+                    ## Few shot 저장
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name
+                        == "search_saved_correct_tool_uses"
+                    ):
+                        tool_metadata = result.metadata or {}
+                        examples = tool_metadata.get("examples", [])
+
+                        if isinstance(examples, list):
+                            main_workflow_turn_state.add_fewshot_results(
+                                examples
+                            )
+
+                        if (
+                            main_workflow_turn_state.stage
+                            == "sql_regeneration"
+                        ):
+                            main_workflow_turn_state.operation = (
+                                "fewshot_search"
+                            ) 
+                    
                     if main_workflow_turn_state is not None and tool_call.name == "run_sql":
                         tool_arguments = tool_call.arguments or {}
                         sql_text = None

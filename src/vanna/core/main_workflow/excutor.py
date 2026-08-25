@@ -1,17 +1,26 @@
-﻿"""MainWorkflow executor for turn state orchestration."""
+"""MainWorkflow executor for turn state orchestration."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-from vanna.core.question_understanding_subworkflow import QuestUnderstand_Input
+from vanna.core.question_understanding_subworkflow import (
+    QuestUnderstand_Input,
+    QuestionUnderstandSubWorkflowExecutor,
+    QuestUnderstand_FinalResult,
+)
+
 
 try:
-    from vanna.core.data_discovering_subworkflow import DataDiscover_Input
+    from vanna.core.data_discovering_subworkflow import (
+        DataDiscover_Input,
+        DataDiscoverSubWorkflowExecutor,
+    )
 except ImportError:
     DataDiscover_Input = None
 
@@ -34,7 +43,25 @@ JSON_RETRY_FAILURE_TYPES = {
 
 FB2_DATA_DISCOVERY_FAILURE_TYPES = {"metadata_execution_error"}
 FB2_QUESTION_UNDERSTANDING_FAILURE_TYPES = {"metadata_semantic_mismatch"}
-TURNSTATE_LOG_DIR = Path(r"C:\Users\dlatn\GenSQL\gensql\scripts\turnstate")
+
+
+def _find_turnstate_log_dir() -> Path:
+    env_path = os.getenv("GENSQL_TURNSTATE_LOG_DIR")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    search_starts = [Path.cwd(), Path(__file__).resolve()]
+    for start in search_starts:
+        current = start if start.is_dir() else start.parent
+        for parent in [current, *current.parents]:
+            gensql_dir = parent / "gensql"
+            if gensql_dir.is_dir():
+                return gensql_dir / "scripts" / "turnstate"
+
+    return Path.cwd() / "gensql" / "scripts" / "turnstate"
+
+
+TURNSTATE_LOG_DIR = _find_turnstate_log_dir()
 
 
 def _safe_filename_part(value: str) -> str:
@@ -97,24 +124,46 @@ def _log_turn_state_summary(event: str, state: MainWorkflowTurnState) -> None:
 
 
 class MainWorkflowExecutor:
-    """Runs pre-LLM subflows and records normalized turn state."""
+    """Runs Main workflows and records normalized turn state."""
 
     def __init__(
         self,
-        question_understanding_executor=None,
-        data_discovery_executor=None,
+        question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
+        data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
-        question_understanding_subworkflow_executor=None,
-        pre_llm_workflow_executor=None,
+        max_workflow_steps: int = 10,
+        workflow_retry_limit: int = 1,
         **_: Any,
     ):
-        self.question_understanding_executor = (
-            question_understanding_executor
-            or question_understanding_subworkflow_executor
-            or pre_llm_workflow_executor
-        )
+        # question_understanding_subworkflow 관련 agent.config.py 적용부분
+        # max_steps와 retry_limit 적용
+        self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
+
+        self._apply_subworkflow_limits(
+            self.question_understanding_executor,
+            max_steps=max_workflow_steps,
+            retry_limit=workflow_retry_limit,
+        )
+        self._apply_subworkflow_limits(
+            self.data_discovery_executor,
+            max_steps=max_workflow_steps,
+            retry_limit=workflow_retry_limit,
+        )
+
+    @staticmethod
+    def _apply_subworkflow_limits(
+        executor,
+        *,
+        max_steps: int,
+        retry_limit: int,
+    ) -> None:
+        if hasattr(executor, "max_steps"):
+            executor.max_steps = max_steps
+        if hasattr(executor, "retry_limit"):
+            executor.retry_limit = retry_limit
+
 
     async def run(self, input: MainWorkflowInput) -> MainWorkflowTurnState:
         state = MainWorkflowTurnState(
@@ -215,6 +264,7 @@ class MainWorkflowExecutor:
 
             structured_output = result_metadata.get("structured_output")
             state.structured_question = structured_output if isinstance(structured_output, dict) else {}
+            state.metadata["searches"] = self._extract_searches(state.structured_question)
             _log_turn_state("structured_question_assigned", state)
 
             subflow_state.status = result_metadata.get("status", "success")
@@ -413,9 +463,12 @@ class MainWorkflowExecutor:
         fewshot_output = result_metadata.get("fewshot_output")
 
         state.metadata = {
-            "searches": self._extract_searches(state.structured_question),
+            "searches": list(
+                state.metadata.get("searches")
+                or self._extract_searches(state.structured_question)
+            ),
             "candidates": self._extract_metadata_candidates(metadata_output),
-            "selected": [],
+            "selected": list(state.metadata.get("selected", [])),
         }
         state.fewshot = self._extract_fewshot_examples(fewshot_output)
 

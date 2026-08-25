@@ -17,16 +17,6 @@ MainWorkflowStage = Literal[
 ]
 SqlAttemptStatus = Literal["success", "failed"]
 
-_SUBFLOW_ALIASES = {
-    "pre_llm_workflow": "question_understanding",
-    "question_understanding_subworkflow": "question_understanding",
-    "question_understanding_subflow": "question_understanding",
-    "data_discovering_subworkflow": "data_discovery",
-    "data_discovery_subworkflow": "data_discovery",
-    "sql_processing_agentic_subworkflow": "sql_processing",
-    "sql_processing_subworkflow": "sql_processing",
-}
-
 
 @dataclass
 class FallbackState:
@@ -168,10 +158,9 @@ class MainWorkflowTurnState:
     )
 
     def subflow(self, name: str) -> SubworkflowState:
-        normalized_name = _SUBFLOW_ALIASES.get(name, name)
-        if normalized_name not in self.subflows:
+        if name not in self.subflows:
             raise ValueError(f"Unsupported subflow: {name}")
-        return self.subflows[normalized_name]
+        return self.subflows[name]
 
     def subworkflow(self, name: str) -> SubworkflowState:
         return self.subflow(name)
@@ -202,6 +191,53 @@ class MainWorkflowTurnState:
             "warnings": list(warnings or []),
             "errors": list(errors or []),
         }
+
+    def record_selected_metadata_from_sql(self, sql: str | None) -> list[dict[str, Any]]:
+        if not sql:
+            return []
+
+        sql_upper = str(sql).upper()
+        candidates = self.metadata.get("candidates", [])
+        if not isinstance(candidates, list):
+            return []
+
+        selected: list[dict[str, Any]] = []
+        seen: set[tuple[str, str | None, str | None]] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+
+            candidate_type = str(candidate.get("type") or "").lower()
+            table_name = candidate.get("table_name")
+            column_name = candidate.get("column_name")
+
+            table_text = str(table_name).strip().upper() if table_name else ""
+            column_text = str(column_name).strip().upper() if column_name else ""
+
+            matched = False
+            if candidate_type == "table" and table_text:
+                matched = table_text in sql_upper
+            elif candidate_type == "column" and column_text:
+                matched = column_text in sql_upper
+            elif table_text or column_text:
+                matched = bool(table_text and table_text in sql_upper) or bool(
+                    column_text and column_text in sql_upper
+                )
+
+            if not matched:
+                continue
+
+            key = (candidate_type, table_text or None, column_text or None)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            selected_item = dict(candidate)
+            selected_item["selection_source"] = "run_sql"
+            selected.append(selected_item)
+
+        self.metadata["selected"] = selected
+        return selected
 
     def record_sql_attempt(
         self,

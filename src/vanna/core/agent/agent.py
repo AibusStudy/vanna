@@ -807,7 +807,14 @@ class Agent:
             llm_request_metadata["main_workflow"] = main_workflow_metadata
         request = await self._build_llm_request(
             conversation,
-            tool_schemas,
+            self._tool_schemas_for_workflow_stage(
+                tool_schemas,
+                (
+                    main_workflow_turn_state.stage
+                    if main_workflow_turn_state is not None
+                    else None
+                ),
+            ),
             user,
             system_prompt,
             metadata=llm_request_metadata,
@@ -1454,7 +1461,14 @@ class Agent:
                 # Rebuild request with tool responses
                 request = await self._build_llm_request(
                     conversation,
-                    tool_schemas,
+                    self._tool_schemas_for_workflow_stage(
+                        tool_schemas,
+                        (
+                            main_workflow_turn_state.stage
+                            if main_workflow_turn_state is not None
+                            else None
+                        ),
+                    ),
                     user,
                     system_prompt,
                     metadata=llm_request_metadata,
@@ -1634,6 +1648,42 @@ You can:
     async def get_available_tools(self, user: User) -> List[ToolSchema]:
         """Get tools available to the user."""
         return await self.tool_registry.get_schemas(user)
+
+    ## Stage별 Tool 필터링
+    @staticmethod
+    def _tool_schemas_for_workflow_stage(
+        tool_schemas: List[ToolSchema],
+        stage: Optional[str],
+    ) -> List[ToolSchema]:
+        """Return only the tools needed by the current workflow stage."""
+        allowed_tool_names_by_stage = {
+            "sql_generation": {
+                "search_business_metadata",
+                "search_saved_correct_tool_uses",
+                "run_sql",
+            },
+            "sql_regeneration": {
+                "search_business_metadata",
+                "search_saved_correct_tool_uses",
+                "run_sql",
+            },
+            "successful_query_save": {
+                "save_question_tool_args",
+            },
+            "final_answer": set(),
+        }
+
+        allowed_tool_names = allowed_tool_names_by_stage.get(stage)
+
+        # MainWorkflow를 사용하지 않는 기존 Agent 호출은 종전 목록을 유지합니다.
+        if allowed_tool_names is None:
+            return tool_schemas
+
+        return [
+            schema
+            for schema in tool_schemas
+            if schema.name in allowed_tool_names
+        ]
 
     async def _build_llm_request(
         self,

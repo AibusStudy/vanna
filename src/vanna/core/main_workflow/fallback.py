@@ -33,6 +33,9 @@ class FallbackRouter:
         max_retry: int,
         errors: list[str] | None = None,
     ) -> FallbackDecision:
+
+        # 메타데이터 검색 결과와 구조화된 질문이 불일치
+        # question_understanding_subworkflow로 fallback
         if failure_type == "metadata_semantic_mismatch":
             if retry_count < max_retry:
                 return FallbackDecision(
@@ -51,12 +54,15 @@ class FallbackRouter:
                         ],
                     },
                 )
+            # fallback이 불가능한 경우 반환 값
             return self._ask_or_fail(
                 failed_node_id=failed_node_id,
                 failure_type=failure_type,
                 errors=errors,
             )
 
+        # 메타데이터 검색 실행 실패
+        #fallback retry_count 확인 후 fallback을 결정
         if failure_type == "metadata_execution_error":
             if retry_count < max_retry:
                 return FallbackDecision(
@@ -74,17 +80,21 @@ class FallbackRouter:
                         ],
                     },
                 )
+
+            # fallback이 불가능한 경우 반환 값
             return self._continue_with_warning(
                 failed_node_id=failed_node_id,
                 failure_type=failure_type,
                 errors=errors,
             )
 
+        # LLM이 재질문에 필요한 반환 값
         return self._ask_or_fail(
             failed_node_id=failed_node_id,
             failure_type=failure_type,
             errors=errors,
         )
+
 
     def _continue_with_warning(
         self,

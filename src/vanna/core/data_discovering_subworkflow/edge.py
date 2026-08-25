@@ -17,13 +17,13 @@ class EdgeCondition(Protocol):
         state: DataDiscover_State,
         last_node_result: DataDiscover_NodeResult,
     ) -> bool:
-        """Return True when this edge should be selected."""
+        """이 edge를 선택해야할 때 True를 반환한다."""
         ...
 
 
 @dataclass(frozen=True)
 class DataDiscover_Edge:
-    """Directed edge between two workflow nodes."""
+    """두 워크플로우 노드 사이에 지정된 엣지"""
 
     source_node_id: str
     target_node_id: str

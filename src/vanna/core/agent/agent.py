@@ -1210,10 +1210,17 @@ class Agent:
                             error_message=None if result.success else result.error,
                         )
 
-                        # SQL 실행 결과를 attempt로 기록하고, 실패 시 재생성 단계로 전환
+                        # SQL 실행 결과에 따라 다음 단계로 전환
                         if attempt.status == "failed":
                             main_workflow_turn_state.stage = "sql_regeneration"
                             main_workflow_turn_state.operation = "sql_regeneration"
+
+                            workflow_context_refresh_required = True
+                        else:
+                            # SQL 실행 성공 후에는 성공한 SQL만으로
+                            # 저장 여부를 판단할 수 있도록 context를 축소
+                            main_workflow_turn_state.stage = "successful_query_save"
+                            main_workflow_turn_state.operation = "successful_query_save"
 
                             workflow_context_refresh_required = True
 
@@ -1223,6 +1230,16 @@ class Agent:
                             "sql_processing_attempt_recorded",
                             main_workflow_turn_state,
                         )
+
+                    # 성공한 SQL 사용 패턴 저장이 끝나면 최종 답변 단계로 전환
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name == "save_question_tool_args"
+                    ):
+                        main_workflow_turn_state.stage = "final_answer"
+                        main_workflow_turn_state.operation = "final_answer"
+                        workflow_context_refresh_required = True
                     # Update status card to show completion
                     final_status = "success" if result.success else "error"
                     if result.success:
@@ -1443,6 +1460,23 @@ class Agent:
                     metadata=llm_request_metadata,
                 )
             else:
+                # SQL 저장 단계에서 tool을 호출하지 않고 바로 답변한 경우에도
+                # TurnState가 저장 단계에 머물지 않도록 최종 답변 단계로 전환
+                if (
+                    main_workflow_turn_state is not None
+                    and main_workflow_turn_state.stage
+                    == "successful_query_save"
+                ):
+                    main_workflow_turn_state.stage = "final_answer"
+                    main_workflow_turn_state.operation = "final_answer"
+
+                    main_workflow_metadata = (
+                        main_workflow_turn_state.to_metadata()
+                    )
+                    context.metadata["main_workflow"] = (
+                        main_workflow_metadata
+                    )
+
                 # Update status to idle and set completion message
                 yield UiComponent(  # type: ignore
                     rich_component=StatusBarUpdateComponent(

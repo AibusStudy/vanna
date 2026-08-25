@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -134,6 +134,8 @@ class MainWorkflowTurnState:
     )
 
     fewshot: list[dict[str, Any]] = field(default_factory=list)
+
+    ui_components: list[Any] = field(default_factory=list)
 
     context_enrichment: dict[str, Any] = field(
         default_factory=lambda: {

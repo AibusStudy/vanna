@@ -697,6 +697,24 @@ class Agent:
                 # producing the final assistant response.
         # Agent no longer runs it as a separate branch.
 
+        # Enhancer가 SQL 생성용 context를 구성할 수 있도록 다음 실행 단계를 SQL 생성으로 전환
+        # enhancer 이전에 적용
+        if main_workflow_turn_state is not None:
+            main_workflow_turn_state.stage = (
+                "sql_generation"
+            )
+            main_workflow_turn_state.operation = (
+                "sql_generation"
+            )
+
+            main_workflow_metadata = (
+                main_workflow_turn_state.to_metadata()
+            )
+            context.metadata["main_workflow"] = (
+                main_workflow_metadata
+            )
+
+
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
             enhancement_span = None

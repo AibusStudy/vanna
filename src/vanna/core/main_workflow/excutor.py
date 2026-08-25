@@ -257,6 +257,7 @@ class MainWorkflowExecutor:
                 },
             )
             result = await self.question_understanding_executor.run(workflow_input)
+            self._collect_ui_component(state, result)
             result_metadata = self._to_metadata(result)
 
             structured_output = result_metadata.get("structured_output")
@@ -383,6 +384,7 @@ class MainWorkflowExecutor:
                 structured_output_override=structured_output_override,
             )
             result = await self._run_data_discovery_executor(workflow_input, input, state)
+            self._collect_ui_component(state, result)
             result_metadata = self._to_metadata(result)
 
             self._apply_data_discovery_result(state, result_metadata)
@@ -496,6 +498,12 @@ class MainWorkflowExecutor:
         )
         state.operation = "continue_with_warning"
         state.subflow("data_discovery").status = "success"
+
+    @staticmethod
+    def _collect_ui_component(state: MainWorkflowTurnState, result: Any) -> None:
+        ui_component = getattr(result, "ui_component", None)
+        if ui_component is not None:
+            state.ui_components.append(ui_component)
 
     def _assign_clarification_result(
         self,

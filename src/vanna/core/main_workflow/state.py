@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -134,6 +134,8 @@ class MainWorkflowTurnState:
     )
 
     fewshot: list[dict[str, Any]] = field(default_factory=list)
+
+    ui_components: list[Any] = field(default_factory=list)
 
     context_enrichment: dict[str, Any] = field(
         default_factory=lambda: {
@@ -275,6 +277,7 @@ class MainWorkflowTurnState:
                 "selected": list(self.metadata.get("selected", [])),
             },
             "fewshot": list(self.fewshot),
+            "guardrails": list(self.guardrails),
             "context_enrichment": dict(self.context_enrichment),
             "current_attempt_number": self.current_attempt_number,
             "attempts": [attempt.to_metadata() for attempt in self.attempts],

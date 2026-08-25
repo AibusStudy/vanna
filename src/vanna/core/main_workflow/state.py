@@ -277,7 +277,6 @@ class MainWorkflowTurnState:
                 "selected": list(self.metadata.get("selected", [])),
             },
             "fewshot": list(self.fewshot),
-            "guardrails": list(self.guardrails),
             "context_enrichment": dict(self.context_enrichment),
             "current_attempt_number": self.current_attempt_number,
             "attempts": [attempt.to_metadata() for attempt in self.attempts],

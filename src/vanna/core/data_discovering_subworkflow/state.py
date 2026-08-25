@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+
+if TYPE_CHECKING:
+    from vanna.core.components import UiComponent
 
 NodeStatus = Literal["success", "failed", "retry", "finish", "skipped"]
 WorkflowStatus = Literal["success", "failed", "skipped", "fallback"]
@@ -79,6 +82,7 @@ class DataDiscover_FinalResult:
     status: WorkflowStatus
     metadata_output: Optional[Dict[str, Any]] = None
     fewshot_output: Optional[Dict[str, Any]] = None
+    ui_component: Optional["UiComponent"] = None
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     retry_counts: Dict[str, int] = field(default_factory=dict)

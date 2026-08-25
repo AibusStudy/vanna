@@ -134,6 +134,38 @@ class WorkflowGraph:
             raise WorkflowGraphError(f"Unknown workflow node: {node_id}")
 
 
+class SearchPlanCondition:
+    def __init__(self, *, exists: bool) -> None:
+        self.exists = exists
+
+    async def evaluate(
+        self,
+        state: DataDiscover_State,
+        last_node_result: DataDiscover_NodeResult,
+    ) -> bool:
+        structured_output = state.input.structured_output or {}
+        return _has_search_plan_queries(structured_output) is self.exists
+
+
+class DataDiscoveryRouterNode:
+    """Routes SQL discovery to batch metadata search or agentic metadata search."""
+
+    node_id = "data_discovery_router"
+
+    async def run(self, state: DataDiscover_State) -> DataDiscover_NodeResult:
+        if state.input.status != "success":
+            return DataDiscover_NodeResult(
+                status="skipped",
+                warnings=["data discovery skipped: question_understanding not successful"],
+            )
+        if state.input.intent != "sql":
+            return DataDiscover_NodeResult(
+                status="skipped",
+                warnings=["data discovery skipped: intent is not sql"],
+            )
+        return DataDiscover_NodeResult(status="success")
+
+
 class MetadataSearchNode:
     """Runs batch metadata search from question-understanding search_plan."""
 
@@ -145,32 +177,20 @@ class MetadataSearchNode:
     async def run(self, state: DataDiscover_State) -> DataDiscover_NodeResult:
         structured_output = state.input.structured_output or {}
         queries = self._build_queries(structured_output)
-        warnings: list[str] = []
 
         if not queries:
-            fallback_query = _question_from_structured_output(structured_output)
-            if fallback_query:
-                queries = [
-                    {
-                        "query_id": "Q1",
-                        "query": fallback_query,
-                        "scope": "auto",
-                    }
-                ]
-                warnings.append("metadata search_plan missing; used structured question")
-            else:
-                return DataDiscover_NodeResult(
-                    status="success",
-                    metadata_output={"status": "skipped", "tables": [], "columns": []},
-                    warnings=["metadata search skipped: search_plan and question missing"],
-                )
+            return DataDiscover_NodeResult(
+                status="failed",
+                error="metadata_search_plan_invalid: search_plan.queries is missing or empty",
+                failure_type="metadata_search_plan_invalid",
+                failure_detail={"structured_question": structured_output},
+            )
 
         try:
             result = self.search_service.search_batch(queries)
         except Exception as exc:
             return DataDiscover_NodeResult(
                 status="failed",
-                warnings=warnings,
                 error=f"metadata_execution_error: {type(exc).__name__}: {exc}",
                 failure_type="metadata_execution_error",
                 failure_detail={
@@ -185,7 +205,7 @@ class MetadataSearchNode:
             return DataDiscover_NodeResult(
                 status="failed",
                 metadata_output={"status": "semantic_mismatch", **result_dict},
-                warnings=warnings + list(result_dict.get("warnings", [])),
+                warnings=list(result_dict.get("warnings", [])),
                 error="metadata_semantic_mismatch: metadata result does not match structured question",
                 failure_type="metadata_semantic_mismatch",
                 failure_detail={
@@ -199,7 +219,7 @@ class MetadataSearchNode:
         return DataDiscover_NodeResult(
             status="success",
             metadata_output={"status": "success", **result_dict},
-            warnings=warnings + list(result_dict.get("warnings", [])),
+            warnings=list(result_dict.get("warnings", [])),
         )
 
     @staticmethod
@@ -208,7 +228,7 @@ class MetadataSearchNode:
         if isinstance(search_plan, dict):
             raw_queries = search_plan.get("queries") or search_plan.get("search_queries")
         else:
-            raw_queries = structured_output.get("search_queries")
+            raw_queries = None
 
         if not isinstance(raw_queries, list):
             return []
@@ -229,6 +249,74 @@ class MetadataSearchNode:
                 }
             )
         return queries
+
+
+class AgenticMetadataSearchNode:
+    """Runs original-question metadata search when no batch search_plan exists."""
+
+    node_id = "agentic_metadata_search"
+
+    def __init__(self, search_service: Any) -> None:
+        self.search_service = search_service
+
+    async def run(self, state: DataDiscover_State) -> DataDiscover_NodeResult:
+        structured_output = state.input.structured_output or {}
+        question = _question_from_structured_output(structured_output)
+        if not question:
+            return DataDiscover_NodeResult(
+                status="success",
+                metadata_output={"status": "skipped", "tables": [], "columns": []},
+                warnings=["agentic metadata search skipped: question missing"],
+            )
+
+        queries = [
+            {
+                "query_id": "AQ1",
+                "query": question,
+                "scope": "auto",
+            }
+        ]
+
+        try:
+            result = self.search_service.search_batch(queries)
+        except Exception as exc:
+            return DataDiscover_NodeResult(
+                status="failed",
+                error=f"metadata_execution_error: {type(exc).__name__}: {exc}",
+                failure_type="metadata_execution_error",
+                failure_detail={
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                    "queries": queries,
+                    "search_mode": "agentic_metadata_search",
+                },
+            )
+
+        result_dict = dict(result)
+        if _is_metadata_semantic_mismatch(result_dict):
+            return DataDiscover_NodeResult(
+                status="success",
+                metadata_output={
+                    **result_dict,
+                    "status": "warning",
+                    "warning_type": "agentic_metadata_semantic_mismatch",
+                    "search_mode": "agentic_metadata_search",
+                },
+                warnings=[
+                    *list(result_dict.get("warnings", [])),
+                    "agentic_metadata_semantic_mismatch: metadata result does not match structured question; continuing to fewshot_search without FB2 fallback",
+                ],
+            )
+
+        return DataDiscover_NodeResult(
+            status="success",
+            metadata_output={
+                "status": "success",
+                "search_mode": "agentic_metadata_search",
+                **result_dict,
+            },
+            warnings=list(result_dict.get("warnings", [])),
+        )
 
 
 class FewShotSearchNode:
@@ -297,18 +385,29 @@ def build_data_discovering_graph(
 ) -> WorkflowGraph:
     graph = WorkflowGraph()
     graph.add_node(
-        MetadataSearchNode(metadata_search_service),
+        DataDiscoveryRouterNode(),
         start=True,
     )
+    graph.add_node(MetadataSearchNode(metadata_search_service))
+    graph.add_node(AgenticMetadataSearchNode(metadata_search_service))
     graph.add_node(
         FewShotSearchNode(agent_memory, limit=fewshot_limit),
         end=True,
     )
     graph.add_edge(
+        "data_discovery_router",
         "metadata_search",
-        "fewshot_search",
-        label="metadata_done_or_warning",
+        condition=SearchPlanCondition(exists=True),
+        label="search_plan_exists",
     )
+    graph.add_edge(
+        "data_discovery_router",
+        "agentic_metadata_search",
+        condition=SearchPlanCondition(exists=False),
+        label="search_plan_missing",
+    )
+    graph.add_edge("metadata_search", "fewshot_search", label="metadata_done")
+    graph.add_edge("agentic_metadata_search", "fewshot_search", label="agentic_metadata_done")
     return graph
 
 
@@ -339,6 +438,21 @@ def _question_from_structured_output(structured_output: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _has_search_plan_queries(structured_output: dict[str, Any]) -> bool:
+    search_plan = structured_output.get("search_plan")
+    if not isinstance(search_plan, dict):
+        return False
+    raw_queries = search_plan.get("queries") or search_plan.get("search_queries")
+    if not isinstance(raw_queries, list):
+        return False
+    return any(
+        isinstance(query, dict)
+        and isinstance(query.get("query"), str)
+        and bool(query.get("query", "").strip())
+        for query in raw_queries
+    )
 
 
 

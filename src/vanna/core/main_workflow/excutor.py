@@ -12,9 +12,7 @@ from typing import Any, Optional
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
     QuestionUnderstandSubWorkflowExecutor,
-    QuestUnderstand_FinalResult,
 )
-
 
 try:
     from vanna.core.data_discovering_subworkflow import (
@@ -135,8 +133,7 @@ class MainWorkflowExecutor:
         workflow_retry_limit: int = 1,
         **_: Any,
     ):
-        # question_understanding_subworkflow 관련 agent.config.py 적용부분
-        # max_steps와 retry_limit 적용
+
         self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
@@ -493,8 +490,9 @@ class MainWorkflowExecutor:
         state.result["message"] = (
             f"{warning}\n"
             "위 에러로 인해 metadata 검색을 완료하지 못했습니다.\n"
-            "SQL을 생성하기 전에 search_business_metadata tool을 사용해 "
-            "전체 table metadata와 column metadata를 다시 검색하세요."
+            "[필수 규칙] run_sql을 호출하기 전에 반드시 search_business_metadata tool을 먼저 호출해 "
+            "전체 table metadata와 column metadata를 다시 검색하세요. "
+            "이 규칙을 만족하기 전에는 SQL 생성/검증/실행을 진행하면 안 됩니다."
         )
         state.operation = "continue_with_warning"
         state.subflow("data_discovery").status = "success"

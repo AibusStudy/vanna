@@ -45,8 +45,9 @@ class FallbackRouter:
                         "reason": failure_type,
                         "target_nodes": ["question_structuring", "search_queries"],
                         "retry_constraints": [
-                            "Regenerate structured question and search_plan with mismatch feedback.",
-                            "Search queries must preserve the user's business intent.",
+                            "structured question과 search_plan을 다시 생성하세요."
+                            "불일치 피드백과 함께 structured question과 search_plan을 재생성합니다.",
+                            "Search queries는 사용자의 비즈니스 의도를 유지해야 합니다",
                         ],
                     },
                 )
@@ -68,7 +69,8 @@ class FallbackRouter:
                         "reason": failure_type,
                         "target_nodes": ["metadata_search"],
                         "retry_constraints": [
-                            "Fallback to original question based metadata search."
+                            ""
+                            "사용자 original 질문 기반 메타데이터 검색으로 fallback합니다."
                         ],
                     },
                 )
@@ -102,9 +104,10 @@ class FallbackRouter:
                 "reason": failure_type,
                 "warning": (
                     f"{error_text}\n"
-                    "위 에러로 인해 metadata 검색을 완료하지 못했다. "
-                    "SQL을 생성하기 전에 search_business_metadata tool을 사용해 "
-                    "전체 table metadata와 column metadata를 다시 검색하라."
+                    "위 에러로 인해 metadata 검색을 완료하지 못했습니다.\n"
+                    "[필수 규칙] run_sql을 호출하기 전에 반드시 search_business_metadata tool을 먼저 호출해 "
+                    "전체 table metadata와 column metadata를 다시 검색하세요. "
+                    "이 규칙을 만족하기 전에는 SQL 생성/검증/실행을 진행하면 안 됩니다."
                 ),
             },
         )

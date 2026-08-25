@@ -715,7 +715,10 @@ class Agent:
             context.metadata["main_workflow"] = (
                 main_workflow_metadata
             )
-
+        
+        # 가공 전 원본 system prompt
+        # tool 호출 이후 context 재구성 시 사용
+        workflow_base_system_prompt = system_prompt
 
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
@@ -885,6 +888,13 @@ class Agent:
 
                 # Collect all tool results first
                 tool_results = []
+
+                # metadata/few-shot 검색 결과 저장 후, 다음 LLM 호출 전에 context를 다시 구성해야 하는지 표시
+                workflow_context_refresh_required = False
+
+                # 재 build 실행 확인
+                workflow_context_refresh_succeeded = False
+
                 for i, tool_call in enumerate(response.tool_calls or []):
                     # Add task for this tool execution
                     tool_task = Task(
@@ -1131,8 +1141,8 @@ class Agent:
                             searches=searches,
                             candidates=candidates,
                         )
-
                         state_changed = True
+                        workflow_context_refresh_required = True
 
                         if (
                             main_workflow_turn_state.stage
@@ -1156,8 +1166,8 @@ class Agent:
                             main_workflow_turn_state.add_fewshot_results(
                                 fewshot_results
                             )
-
                         state_changed = True
+                        workflow_context_refresh_required = True
 
                         if (
                             main_workflow_turn_state.stage
@@ -1330,6 +1340,8 @@ class Agent:
                     tool_results.append(
                         {
                             "tool_call_id": tool_call.id,
+                            "tool_name": tool_call.name,
+                            "success": result.success,
                             "content": (
                                 result.result_for_llm
                                 if result.success
@@ -1337,13 +1349,86 @@ class Agent:
                             ),
                         }
                     )
+                # metadata/few-shot 검색 결과가 TurnState에 추가된 경우
+                # 최신 stage context를 다시 구성
+                if (
+                    workflow_context_refresh_required
+                    and main_workflow_turn_state is not None
+                    and self.llm_context_enhancer is not None
+                    and workflow_base_system_prompt is not None
+                ):
+                    try:
+                        # 최신 TurnState snapshot 생성
+                        main_workflow_metadata = (
+                            main_workflow_turn_state.to_metadata()
+                        )
+                        context.metadata["main_workflow"] = (
+                            main_workflow_metadata
+                        )
 
+                        # 가공 전 원본 prompt에서 최신 context를 다시 생성
+                        system_prompt = await (
+                            self.llm_context_enhancer
+                            .enhance_system_prompt_with_workflow(
+                                workflow_base_system_prompt,
+                                message,
+                                user,
+                                workflow_state=(
+                                    main_workflow_turn_state
+                                ),
+                                workflow_metadata=(
+                                    main_workflow_metadata
+                                ),
+                            )
+                        )
+
+                        # 다음 LLM request의 metadata도 최신 snapshot으로 변경
+                        llm_request_metadata["main_workflow"] = (
+                            main_workflow_metadata
+                        )
+
+                        workflow_context_refresh_succeeded = True
+
+                    except Exception:
+                        logger.exception(
+                            "Failed to refresh workflow context "
+                            "after tool execution"
+                        )
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps
                 for tool_result in tool_results:
+                    tool_result_content = tool_result["content"]
+
+                    # 검색 결과가 TurnState에 저장되고
+                    # 최신 builder context 재구성까지 성공한 경우에만
+                    # raw ToolResult를 짧은 완료 메시지로 교체
+                    if (
+                        workflow_context_refresh_succeeded
+                        and tool_result["success"]
+                    ):
+                        if (
+                            tool_result["tool_name"]
+                            == "search_business_metadata"
+                        ):
+                            tool_result_content = (
+                                "Metadata search completed. "
+                                "The structured results are available "
+                                "in the current turn context."
+                            )
+
+                        elif (
+                            tool_result["tool_name"]
+                            == "search_saved_correct_tool_uses"
+                        ):
+                            tool_result_content = (
+                                "Few-shot search completed. "
+                                "Any retrieved examples are available "
+                                "in the current turn context."
+                            )
+
                     tool_response_message = Message(
                         role="tool",
-                        content=tool_result["content"],
+                        content=tool_result_content,
                         tool_call_id=tool_result["tool_call_id"],
                     )
                     conversation.add_message(tool_response_message)

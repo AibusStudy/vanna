@@ -1224,6 +1224,12 @@ class Agent:
 
                             workflow_context_refresh_required = True
                         else:
+                            # 실제 실행에 성공한 SQL에 사용된 table/column metadata만
+                            # 최종 답변용 selected 목록으로 기록
+                            main_workflow_turn_state.record_selected_metadata_from_sql(
+                                sql_text
+                            )
+
                             # SQL 실행 성공 후에는 성공한 SQL만으로
                             # 저장 여부를 판단할 수 있도록 context를 축소
                             main_workflow_turn_state.stage = "successful_query_save"

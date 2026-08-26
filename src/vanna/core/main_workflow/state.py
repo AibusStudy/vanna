@@ -158,6 +158,8 @@ class MainWorkflowTurnState:
             "message": None,
             "csv_name": None,
             "json_name": None,
+            "row_count": None,
+            "columns": [],
         }
     )
 

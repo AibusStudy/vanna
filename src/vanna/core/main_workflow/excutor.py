@@ -129,7 +129,8 @@ class MainWorkflowExecutor:
         question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
         data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
-        # 현재 워크플로우를 고정하여 제어하고 있기때문에 불필요
+        
+        # max_workflow_steps, workflow_retry_limit는 현재 MainWorkflowExecutor에서 적용하지 않는다.
         # max_workflow_steps: int = 10,
         # workflow_retry_limit: int = 1,
         **_: Any,

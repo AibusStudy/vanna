@@ -1224,6 +1224,26 @@ class Agent:
 
                             workflow_context_refresh_required = True
                         else:
+                            # run_sql이 이미 구조화한 실행 결과 요약을
+                            # 최종 답변용 TurnState result에 저장
+                            output_file = result_metadata.get("output_file")
+                            row_count = result_metadata.get("row_count")
+                            columns = result_metadata.get("columns")
+
+                            main_workflow_turn_state.result["csv_name"] = (
+                                str(output_file)
+                                if output_file is not None
+                                else None
+                            )
+                            main_workflow_turn_state.result["row_count"] = (
+                                row_count
+                            )
+                            main_workflow_turn_state.result["columns"] = (
+                                list(columns)
+                                if isinstance(columns, (list, tuple))
+                                else []
+                            )
+
                             # 실제 실행에 성공한 SQL에 사용된 table/column metadata만
                             # 최종 답변용 selected 목록으로 기록
                             main_workflow_turn_state.record_selected_metadata_from_sql(

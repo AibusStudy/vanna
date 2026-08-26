@@ -129,7 +129,7 @@ class MainWorkflowExecutor:
         question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
         data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
-        max_workflow_steps: int = 10,
+        # max_workflow_steps: int = 10, # 현재 워크플로우를 고정하여 제어하고 있기때문에 불필요
         workflow_retry_limit: int = 1,
         **_: Any,
     ):
@@ -140,12 +140,12 @@ class MainWorkflowExecutor:
 
         self._apply_subworkflow_limits(
             self.question_understanding_executor,
-            max_steps=max_workflow_steps,
+            # max_steps=max_workflow_steps,
             retry_limit=workflow_retry_limit,
         )
         self._apply_subworkflow_limits(
             self.data_discovery_executor,
-            max_steps=max_workflow_steps,
+            # max_steps=max_workflow_steps,
             retry_limit=workflow_retry_limit,
         )
 

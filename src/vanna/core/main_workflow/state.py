@@ -13,6 +13,8 @@ MainWorkflowStage = Literal[
     "context_enrichment",
     "sql_generation",
     "sql_regeneration",
+    "successful_query_save",
+    "final_answer",
     "final",
 ]
 SqlAttemptStatus = Literal["success", "failed"]

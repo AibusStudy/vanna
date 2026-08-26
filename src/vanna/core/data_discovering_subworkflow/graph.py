@@ -1,4 +1,4 @@
-"""Graph and default nodes for Data-Discovering workflow."""
+﻿"""Graph and default nodes for Data-Discovering workflow."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import logging
 from collections import defaultdict, deque
 from typing import Any, DefaultDict, Dict, List, Optional, Set
 
-from .executor import DataDiscoverSubWorkflowExecutor
 from .edge import EdgeCondition, DataDiscover_Edge
 from .node import DataDiscover_Node
 from .state import DataDiscover_NodeResult, DataDiscover_State

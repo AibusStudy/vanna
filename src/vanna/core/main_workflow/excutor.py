@@ -169,6 +169,8 @@ class MainWorkflowExecutor:
         state = MainWorkflowTurnState(
             turn_id=input.request_id,
             original_question=input.original_message,
+            conversation_id=input.conversation_id,
+            turn_number=input.turn_number,
         )
         _log_turn_state("initialized", state)
 

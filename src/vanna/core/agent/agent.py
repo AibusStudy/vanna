@@ -5,6 +5,7 @@ This module provides the main Agent class that orchestrates the interaction
 between LLM services, tools, and conversation storage.
 """
 
+import json
 import traceback
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
@@ -31,12 +32,14 @@ from vanna.core.registry import ToolRegistry
 from vanna.core.system_prompt import DefaultSystemPromptBuilder
 from vanna.core.lifecycle import LifecycleHook
 from vanna.core.middleware import LlmMiddleware
-from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
-from vanna.core.pre_llm_workflow import (
-    PreLlmWorkflowExecutor,
-    WorkflowFinalResult,
-    WorkflowInput,
+from vanna.core.main_workflow.state import MainWorkflowInput
+from vanna.core.main_workflow.excutor import MainWorkflowExecutor, _log_turn_state
+from vanna.core.sql_processing_agentic_subworkflow import (
+    SqlProcessingInput,
+    SqlProcessingSubworkflowExecutor,
 )
+from vanna.core.workflow import WorkflowHandler, DefaultWorkflowHandler
+
 from vanna.core.recovery import ErrorRecoveryStrategy, RecoveryActionType
 from vanna.core.enricher import ToolContextEnricher
 from vanna.core.enhancer import LlmContextEnhancer, DefaultLlmContextEnhancer
@@ -102,7 +105,7 @@ class Agent:
         conversation_filters: List[ConversationFilter] = [],
         observability_provider: Optional[ObservabilityProvider] = None,
         audit_logger: Optional[AuditLogger] = None,
-        pre_llm_workflow_executor: Optional[PreLlmWorkflowExecutor] = None,
+        main_workflow_executor: Optional[MainWorkflowExecutor] = None,
     ):
         self.llm_service = llm_service
         self.tool_registry = tool_registry
@@ -138,14 +141,8 @@ class Agent:
         self.observability_provider = observability_provider
         self.audit_logger = audit_logger
 
-        # pre_llm_workflow 관련 agent.config.py 적용 부분
-        # max_steps와 retry_limit 적용
-        self.pre_llm_workflow_executor = pre_llm_workflow_executor
-        if isinstance(self.pre_llm_workflow_executor, PreLlmWorkflowExecutor):
-            self.pre_llm_workflow_executor.max_steps = self.config.max_workflow_steps
-            self.pre_llm_workflow_executor.retry_limit = (
-                self.config.workflow_retry_limit
-            )
+        # main_workflow executor 적용
+        self.main_workflow_executor = main_workflow_executor
 
         # Wire audit logger into tool registry
         if self.audit_logger and self.config.audit_config.enabled:
@@ -616,25 +613,32 @@ class Agent:
             user, tool_schemas
         )
 
-        # pre_llm_workflow
+        # main_workflow
         # system prompt build 이후 ~ enhance 전에 실행
-        workflow_result: Optional[WorkflowFinalResult] = None
         workflow_metadata: Optional[Dict[str, Any]] = None
+        main_workflow_turn_state = None
+        main_workflow_metadata: Optional[Dict[str, Any]] = None
 
-        if self.config.enable_pre_llm_workflow and self.pre_llm_workflow_executor:
+        if self.main_workflow_executor:
             try:
                 filtered_conversation_history = (
                     await self._apply_conversation_filters(
                         conversation.messages[:-1]
                     )
                 )
-                workflow_input = WorkflowInput(
+                main_workflow_input = MainWorkflowInput(
                     user_id=user.id,
                     conversation_id=conversation_id,
                     request_id=request_id,
                     original_message=message,
                     system_prompt=system_prompt,
-                    tool_names=[tool.name for tool in tool_schemas],
+                    tool_schemas=tool_schemas,
+                    tool_context=context,
+                    turn_number=sum(
+                        1
+                        for conversation_message in conversation.messages
+                        if conversation_message.role == "user"
+                    ),
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,
@@ -648,53 +652,128 @@ class Agent:
                     },
                 )
 
-                workflow_result = await self.pre_llm_workflow_executor.run(
-                    workflow_input
+                main_workflow_turn_state = await self.main_workflow_executor.run(
+                    main_workflow_input
                 )
-                workflow_metadata = workflow_result.to_metadata()
+                main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                logger.info(
+                    "[agent.main_workflow] turn_state_saved\n%s",
+                    json.dumps(
+                        main_workflow_metadata,
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                )
 
             except Exception as e:
-                workflow_result = WorkflowFinalResult(
-                    status="failed",
-                    errors=[f"Pre-LLM workflow failed: {str(e)}"],
+                main_workflow_metadata = {
+                    "status": "failed",
+                    "errors": [f"Main workflow failed: {str(e)}"],
+                }
+                logger.exception("[agent.main_workflow] failed")
+
+            if main_workflow_metadata is not None:
+                context.metadata["main_workflow"] = main_workflow_metadata
+                logger.info(
+                    "[agent.main_workflow] context_metadata_saved\n%s",
+                    json.dumps(
+                        context.metadata["main_workflow"],
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
                 )
-                workflow_metadata = workflow_result.to_metadata()
 
-            if self.config.attach_pre_llm_workflow_metadata and workflow_metadata:
-                context.metadata["pre_llm_workflow"] = workflow_metadata
-
-                if workflow_result.structured_output:
+            if main_workflow_turn_state is not None:
+                question_subflow = main_workflow_turn_state.subworkflow("question_understanding")
+                workflow_metadata = {
+                    "status": question_subflow.status,
+                    "structured_output": main_workflow_turn_state.structured_question,
+                    "errors": list(question_subflow.errors),
+                    "retry_counts": dict(question_subflow.retry_counts),
+                }
+                if main_workflow_turn_state.structured_question:
+                    context.metadata["question_understanding"] = workflow_metadata
                     context.metadata["structured_question"] = (
-                        workflow_result.structured_output
+                        main_workflow_turn_state.structured_question
                     )
 
-            if self.config.persist_pre_llm_workflow_metadata and workflow_metadata:
-                user_message.metadata["pre_llm_workflow"] = workflow_metadata
-                conversation.metadata["last_pre_llm_workflow"] = workflow_metadata
+                # MainWorkflow owns turn/subworkflow state only.
+                # The existing Agent LLM/tool loop below remains responsible for
+                # producing the final assistant response.
+                for ui_component in getattr(main_workflow_turn_state, "ui_components", []):
+                    yield ui_component
+        # Agent no longer runs it as a separate branch.
 
-            # 최종 Pre-LLM UI 출력
-            if workflow_result and workflow_result.ui_component:
-                yield workflow_result.ui_component
+        # Enhancer가 SQL 생성용 context를 구성할 수 있도록 다음 실행 단계를 SQL 생성으로 전환
+        # enhancer 이전에 적용
+        if main_workflow_turn_state is not None:
+            main_workflow_turn_state.stage = (
+                "sql_generation"
+            )
+            main_workflow_turn_state.operation = (
+                "sql_generation"
+            )
+
+            main_workflow_metadata = (
+                main_workflow_turn_state.to_metadata()
+            )
+            context.metadata["main_workflow"] = (
+                main_workflow_metadata
+            )
+        
+        # 가공 전 원본 system prompt
+        # tool 호출 이후 context 재구성 시 사용
+        workflow_base_system_prompt = system_prompt
 
         # Enhance system prompt with LLM context enhancer
         if self.llm_context_enhancer and system_prompt is not None:
             enhancement_span = None
+            enhancer_name = self.llm_context_enhancer.__class__.__name__
+            system_prompt_before_enrichment = system_prompt
             if self.observability_provider:
                 enhancement_span = await self.observability_provider.create_span(
                     "agent.llm_context.enhance_system_prompt",
-                    attributes={
-                        "enhancer": self.llm_context_enhancer.__class__.__name__
-                    },
+                    attributes={"enhancer": enhancer_name},
                 )
 
-            system_prompt = (
-                await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
-                    system_prompt,
-                    message,
-                    user,
-                    workflow_result,
-                )
-            )
+            try:
+                try:
+                    system_prompt = await self.llm_context_enhancer.enhance_system_prompt_with_workflow(
+                        system_prompt,
+                        message,
+                        user,
+                        workflow_state=main_workflow_turn_state,
+                        workflow_metadata=main_workflow_metadata,
+                    )
+                except TypeError:
+                    system_prompt = await self.llm_context_enhancer.enhance_system_prompt(
+                        system_prompt,
+                        message,
+                        user,
+                    )
+                if main_workflow_turn_state is not None:
+                    main_workflow_turn_state.record_context_enrichment(
+                        status="success",
+                        enhancer=enhancer_name,
+                        system_prompt_before=system_prompt_before_enrichment,
+                        system_prompt_after=system_prompt,
+                    )
+                    main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                    context.metadata["main_workflow"] = main_workflow_metadata
+                    _log_turn_state("context_enrichment_saved", main_workflow_turn_state)
+            except Exception as exc:
+                if main_workflow_turn_state is not None:
+                    main_workflow_turn_state.record_context_enrichment(
+                        status="failed",
+                        enhancer=enhancer_name,
+                        system_prompt_before=system_prompt_before_enrichment,
+                        system_prompt_after=system_prompt_before_enrichment,
+                        errors=[f"{type(exc).__name__}: {exc}"],
+                    )
+                    main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                    context.metadata["main_workflow"] = main_workflow_metadata
+                    _log_turn_state("context_enrichment_failed", main_workflow_turn_state)
+                raise
 
             if self.observability_provider and enhancement_span:
                 await self.observability_provider.end_span(enhancement_span)
@@ -703,9 +782,8 @@ class Agent:
                         "agent.llm_context.enhance_system_prompt.duration",
                         enhancement_span.duration_ms() or 0,
                         "ms",
-                        tags={"enhancer": self.llm_context_enhancer.__class__.__name__},
+                        tags={"enhancer": enhancer_name},
                     )
-
         if self.observability_provider and prompt_span:
             prompt_span.set_attribute(
                 "prompt_length", len(system_prompt) if system_prompt else 0
@@ -717,23 +795,51 @@ class Agent:
                 )
 
         # Build LLM request
-        # pre_llm_workflow의 결과를 toolContext와 LlmRequest.metadata에 붙일지 결정
         llm_request_metadata: Dict[str, Any] = {}
-        if (
-            self.config.attach_pre_llm_workflow_metadata
-            and workflow_metadata is not None
-        ):
-            llm_request_metadata["pre_llm_workflow"] = workflow_metadata
-
+        attach_main_workflow_metadata = getattr(
+            self.config,
+            "attach_main_workflow_metadata",
+            True,
+        )
+        attach_question_metadata = getattr(
+            self.config,
+            "attach_question_understanding_subworkflow_metadata",
+            False,
+        )
+        if attach_question_metadata and workflow_metadata is not None:
+            llm_request_metadata["question_understanding"] = workflow_metadata
+        if attach_main_workflow_metadata and main_workflow_metadata is not None:
+            llm_request_metadata["main_workflow"] = main_workflow_metadata
         request = await self._build_llm_request(
             conversation,
-            tool_schemas,
+            self._tool_schemas_for_workflow_stage(
+                tool_schemas,
+                (
+                    main_workflow_turn_state.stage
+                    if main_workflow_turn_state is not None
+                    else None
+                ),
+            ),
             user,
             system_prompt,
             metadata=llm_request_metadata,
         )
 
-        # Process with tool loop
+        # 기존 tool-calling loop(sql_processing subworkflow)를 wrapper로 감쌈
+        # tool-calling loop(sql_processing subworkflow) 실행
+        sql_processing_executor = SqlProcessingSubworkflowExecutor()
+        if main_workflow_turn_state is not None:
+            sql_processing_executor.start(
+                main_workflow_turn_state,
+                SqlProcessingInput(
+                    system_prompt=system_prompt,
+                    metadata=main_workflow_metadata or {},
+                ),
+            )
+            main_workflow_metadata = main_workflow_turn_state.to_metadata()
+            context.metadata["main_workflow"] = main_workflow_metadata
+            _log_turn_state("sql_processing_started", main_workflow_turn_state)
+
         tool_iterations = 0
 
         while tool_iterations < self.config.max_tool_iterations:
@@ -794,6 +900,13 @@ class Agent:
 
                 # Collect all tool results first
                 tool_results = []
+
+                # metadata/few-shot 검색 결과 저장 후, 다음 LLM 호출 전에 context를 다시 구성해야 하는지 표시
+                workflow_context_refresh_required = False
+
+                # 재 build 실행 확인
+                workflow_context_refresh_succeeded = False
+
                 for i, tool_call in enumerate(response.tool_calls or []):
                     # Add task for this tool execution
                     tool_task = Task(
@@ -969,7 +1082,202 @@ class Agent:
                                         "tool": tool_call.name,
                                     },
                                 )
+                    # state 변화 확인
+                    state_changed = False
+                    
+                    ## 메타 데이터 저장
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name
+                        == "search_business_metadata"
+                    ):
+                        tool_metadata = result.metadata or {}
 
+                        searches: list[dict[str, Any]] = []
+
+                        if tool_metadata.get("mode") == "multi_query":
+                            query_results = tool_metadata.get(
+                                "query_results",
+                                [],
+                            )
+
+                            if isinstance(query_results, list):
+                                searches = [
+                                    {
+                                        "query_id": item.get("query_id"),
+                                        "query": item.get("query"),
+                                        "scope": item.get("scope"),
+                                    }
+                                    for item in query_results
+                                    if isinstance(item, dict)
+                                ]
+
+                        elif tool_metadata.get("mode") == "agentic":
+                            searches = [
+                                {
+                                    "query": tool_metadata.get("query"),
+                                    "scope": tool_metadata.get("scope"),
+                                }
+                            ]
+
+                        tables = tool_metadata.get("tables", [])
+                        columns = tool_metadata.get("columns", [])
+
+                        tables = tables if isinstance(tables, list) else []
+                        columns = (
+                            columns
+                            if isinstance(columns, list)
+                            else []
+                        )
+
+                        candidates = [
+                            {
+                                **candidate,
+                                "type": "table",
+                            }
+                            for candidate in tables
+                            if isinstance(candidate, dict)
+                        ]
+
+                        candidates.extend(
+                            {
+                                **candidate,
+                                "type": "column",
+                            }
+                            for candidate in columns
+                            if isinstance(candidate, dict)
+                        )
+
+                        main_workflow_turn_state.add_metadata_search_result(
+                            searches=searches,
+                            candidates=candidates,
+                        )
+                        state_changed = True
+                        workflow_context_refresh_required = True
+
+                        if (
+                            main_workflow_turn_state.stage
+                            == "sql_regeneration"
+                        ):
+                            main_workflow_turn_state.operation = (
+                                "metadata_search"
+                            )
+                            
+                    ## Few shot 저장
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name
+                        == "search_saved_correct_tool_uses"
+                    ):
+                        tool_metadata = result.metadata or {}
+                        fewshot_results = tool_metadata.get("fewshot", [])
+
+                        if isinstance(fewshot_results, list):
+                            main_workflow_turn_state.add_fewshot_results(
+                                fewshot_results
+                            )
+                        state_changed = True
+                        workflow_context_refresh_required = True
+
+                        if (
+                            main_workflow_turn_state.stage
+                            == "sql_regeneration"
+                        ):
+                            main_workflow_turn_state.operation = (
+                                "fewshot_search"
+                            ) 
+                    
+                    if state_changed:
+                        main_workflow_metadata = (
+                            main_workflow_turn_state.to_metadata()
+                        )
+                        context.metadata["main_workflow"] = (
+                            main_workflow_metadata
+                        )
+                    
+                    if main_workflow_turn_state is not None and tool_call.name == "run_sql":
+                        tool_arguments = tool_call.arguments or {}
+                        sql_text = None
+                        result_metadata = (
+                            result.metadata if isinstance(result.metadata, dict) else {}
+                        )
+                        executed_sql = result_metadata.get("executed_sql")
+                        if executed_sql is not None:
+                            sql_text = executed_sql
+                        if isinstance(tool_arguments, dict):
+                            sql_text = sql_text or (
+                                    tool_arguments.get("sql")
+                                    or tool_arguments.get("query")
+                                    or tool_arguments.get("statement")
+                                )
+                        if sql_text is not None:
+                            sql_text = str(sql_text)
+
+                        # SQL 실행 성공·실패 기록
+                        attempt = main_workflow_turn_state.record_sql_attempt(
+                            sql=sql_text,
+                            status="success" if result.success else "failed",
+                            error_message=None if result.success else result.error,
+                        )
+
+                        # SQL 실행 결과에 따라 다음 단계로 전환
+                        if attempt.status == "failed":
+                            main_workflow_turn_state.stage = "sql_regeneration"
+                            main_workflow_turn_state.operation = "sql_regeneration"
+
+                            workflow_context_refresh_required = True
+                        else:
+                            # run_sql이 이미 구조화한 실행 결과 요약을
+                            # 최종 답변용 TurnState result에 저장
+                            output_file = result_metadata.get("output_file")
+                            row_count = result_metadata.get("row_count")
+                            columns = result_metadata.get("columns")
+
+                            main_workflow_turn_state.result["csv_name"] = (
+                                str(output_file)
+                                if output_file is not None
+                                else None
+                            )
+                            main_workflow_turn_state.result["row_count"] = (
+                                row_count
+                            )
+                            main_workflow_turn_state.result["columns"] = (
+                                list(columns)
+                                if isinstance(columns, (list, tuple))
+                                else []
+                            )
+
+                            # 실제 실행에 성공한 SQL에 사용된 table/column metadata만
+                            # 최종 답변용 selected 목록으로 기록
+                            main_workflow_turn_state.record_selected_metadata_from_sql(
+                                sql_text
+                            )
+
+                            # SQL 실행 성공 후에는 성공한 SQL만으로
+                            # 저장 여부를 판단할 수 있도록 context를 축소
+                            main_workflow_turn_state.stage = "successful_query_save"
+                            main_workflow_turn_state.operation = "successful_query_save"
+
+                            workflow_context_refresh_required = True
+
+                        main_workflow_metadata = main_workflow_turn_state.to_metadata()
+                        context.metadata["main_workflow"] = main_workflow_metadata
+                        _log_turn_state(
+                            "sql_processing_attempt_recorded",
+                            main_workflow_turn_state,
+                        )
+
+                    # 성공한 SQL 사용 패턴 저장이 끝나면 최종 답변 단계로 전환
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name == "save_question_tool_args"
+                    ):
+                        main_workflow_turn_state.stage = "final_answer"
+                        main_workflow_turn_state.operation = "final_answer"
+                        workflow_context_refresh_required = True
                     # Update status card to show completion
                     final_status = "success" if result.success else "error"
                     if result.success:
@@ -1088,6 +1396,8 @@ class Agent:
                     tool_results.append(
                         {
                             "tool_call_id": tool_call.id,
+                            "tool_name": tool_call.name,
+                            "success": result.success,
                             "content": (
                                 result.result_for_llm
                                 if result.success
@@ -1095,13 +1405,86 @@ class Agent:
                             ),
                         }
                     )
+                # metadata/few-shot 검색 결과가 TurnState에 추가된 경우
+                # 최신 stage context를 다시 구성
+                if (
+                    workflow_context_refresh_required
+                    and main_workflow_turn_state is not None
+                    and self.llm_context_enhancer is not None
+                    and workflow_base_system_prompt is not None
+                ):
+                    try:
+                        # 최신 TurnState snapshot 생성
+                        main_workflow_metadata = (
+                            main_workflow_turn_state.to_metadata()
+                        )
+                        context.metadata["main_workflow"] = (
+                            main_workflow_metadata
+                        )
 
+                        # 가공 전 원본 prompt에서 최신 context를 다시 생성
+                        system_prompt = await (
+                            self.llm_context_enhancer
+                            .enhance_system_prompt_with_workflow(
+                                workflow_base_system_prompt,
+                                message,
+                                user,
+                                workflow_state=(
+                                    main_workflow_turn_state
+                                ),
+                                workflow_metadata=(
+                                    main_workflow_metadata
+                                ),
+                            )
+                        )
+
+                        # 다음 LLM request의 metadata도 최신 snapshot으로 변경
+                        llm_request_metadata["main_workflow"] = (
+                            main_workflow_metadata
+                        )
+
+                        workflow_context_refresh_succeeded = True
+
+                    except Exception:
+                        logger.exception(
+                            "Failed to refresh workflow context "
+                            "after tool execution"
+                        )
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps
                 for tool_result in tool_results:
+                    tool_result_content = tool_result["content"]
+
+                    # 검색 결과가 TurnState에 저장되고
+                    # 최신 builder context 재구성까지 성공한 경우에만
+                    # raw ToolResult를 짧은 완료 메시지로 교체
+                    if (
+                        workflow_context_refresh_succeeded
+                        and tool_result["success"]
+                    ):
+                        if (
+                            tool_result["tool_name"]
+                            == "search_business_metadata"
+                        ):
+                            tool_result_content = (
+                                "Metadata search completed. "
+                                "The structured results are available "
+                                "in the current turn context."
+                            )
+
+                        elif (
+                            tool_result["tool_name"]
+                            == "search_saved_correct_tool_uses"
+                        ):
+                            tool_result_content = (
+                                "Few-shot search completed. "
+                                "Any retrieved examples are available "
+                                "in the current turn context."
+                            )
+
                     tool_response_message = Message(
                         role="tool",
-                        content=tool_result["content"],
+                        content=tool_result_content,
                         tool_call_id=tool_result["tool_call_id"],
                     )
                     conversation.add_message(tool_response_message)
@@ -1109,12 +1492,47 @@ class Agent:
                 # Rebuild request with tool responses
                 request = await self._build_llm_request(
                     conversation,
-                    tool_schemas,
+                    self._tool_schemas_for_workflow_stage(
+                        tool_schemas,
+                        (
+                            main_workflow_turn_state.stage
+                            if main_workflow_turn_state is not None
+                            else None
+                        ),
+                    ),
                     user,
                     system_prompt,
                     metadata=llm_request_metadata,
                 )
             else:
+                # SQL 저장 단계에서 tool을 호출하지 않고 바로 답변한 경우에도
+                # TurnState가 저장 단계에 머물지 않도록 최종 답변 단계로 전환
+                if (
+                    main_workflow_turn_state is not None
+                    and main_workflow_turn_state.stage
+                    == "successful_query_save"
+                ):
+                    main_workflow_turn_state.stage = "final_answer"
+                    main_workflow_turn_state.operation = "final_answer"
+
+                # Tool 호출이 없는 최종 LLM 답변을 TurnState에 저장
+                if (
+                    main_workflow_turn_state is not None
+                    and response.content
+                ):
+                    main_workflow_turn_state.result["message"] = (
+                        response.content
+                    )
+
+                # stage와 최종 답변이 반영된 최신 snapshot 동기화
+                if main_workflow_turn_state is not None:
+                    main_workflow_metadata = (
+                        main_workflow_turn_state.to_metadata()
+                    )
+                    context.metadata["main_workflow"] = (
+                        main_workflow_metadata
+                    )
+
                 # Update status to idle and set completion message
                 yield UiComponent(  # type: ignore
                     rich_component=StatusBarUpdateComponent(
@@ -1188,6 +1606,18 @@ You can:
                 )
             )
 
+        # tool-calling loop(sql_processing subworkflow)를 종료/기록
+        if main_workflow_turn_state is not None:
+            tool_limit_reached = tool_iterations >= self.config.max_tool_iterations
+            sql_processing_executor.finalize(
+                main_workflow_turn_state,
+                status="failed" if tool_limit_reached else "success",
+                errors=["max_tool_iterations exceeded"] if tool_limit_reached else None,
+            )
+            main_workflow_metadata = main_workflow_turn_state.to_metadata()
+            context.metadata["main_workflow"] = main_workflow_metadata
+            _log_turn_state("sql_processing_finalized", main_workflow_turn_state)
+
         # Save conversation if configured
         if self.config.auto_save_conversations:
             save_span = None
@@ -1260,6 +1690,42 @@ You can:
     async def get_available_tools(self, user: User) -> List[ToolSchema]:
         """Get tools available to the user."""
         return await self.tool_registry.get_schemas(user)
+
+    ## Stage별 Tool 필터링
+    @staticmethod
+    def _tool_schemas_for_workflow_stage(
+        tool_schemas: List[ToolSchema],
+        stage: Optional[str],
+    ) -> List[ToolSchema]:
+        """Return only the tools needed by the current workflow stage."""
+        allowed_tool_names_by_stage = {
+            "sql_generation": {
+                "search_business_metadata",
+                "search_saved_correct_tool_uses",
+                "run_sql",
+            },
+            "sql_regeneration": {
+                "search_business_metadata",
+                "search_saved_correct_tool_uses",
+                "run_sql",
+            },
+            "successful_query_save": {
+                "save_question_tool_args",
+            },
+            "final_answer": set(),
+        }
+
+        allowed_tool_names = allowed_tool_names_by_stage.get(stage)
+
+        # MainWorkflow를 사용하지 않는 기존 Agent 호출은 종전 목록을 유지합니다.
+        if allowed_tool_names is None:
+            return tool_schemas
+
+        return [
+            schema
+            for schema in tool_schemas
+            if schema.name in allowed_tool_names
+        ]
 
     async def _build_llm_request(
         self,
@@ -1523,3 +1989,4 @@ You can:
                     )
 
         return response  #
+

@@ -1,10 +1,10 @@
-"""Tests for Agent integration with the optional pre-LLM workflow.
+"""Tests for Agent integration with the optional Question-Understanding workflow.
 
 test 항목
 - Agent가 LLM request metadata에 workflow 결과 전달
 - workflow disabled 시 기존 동작 유지
 - workflow 예외 발생 시 LLM 호출 fallback
-- tool context에 pre_llm_workflow, structured_question 전달
+- tool context에 question_understanding_subworkflow, structured_question 전달
 """
 
 from __future__ import annotations
@@ -23,13 +23,13 @@ sys.path.insert(0, str(SRC_PATH))
 from vanna import Agent, AgentConfig
 from vanna.core.filter import ConversationFilter
 from vanna.core.llm import LlmRequest, LlmResponse, LlmService, LlmStreamChunk
-from vanna.core.pre_llm_workflow import (
-    NodeResult,
-    PreLlmWorkflowExecutor,
-    WorkflowFinalResult,
+from vanna.core.question_understanding_subworkflow import (
+    QuestUnderstand_NodeResult,
+    QuestionUnderstandSubWorkflowExecutor,
+    QuestUnderstand_FinalResult,
     WorkflowGraph,
-    WorkflowInput,
-    WorkflowState,
+    QuestUnderstand_Input,
+    QuestUnderstand_State,
 )
 from vanna.core.registry import ToolRegistry
 from vanna.core.storage import Conversation, Message
@@ -73,11 +73,11 @@ class RecordingLlmService(LlmService):
 
 class StaticWorkflowExecutor:
     def __init__(self) -> None:
-        self.inputs: List[WorkflowInput] = []
+        self.inputs: List[QuestUnderstand_Input] = []
 
-    async def run(self, workflow_input: WorkflowInput) -> WorkflowFinalResult:
+    async def run(self, workflow_input: QuestUnderstand_Input) -> QuestUnderstand_FinalResult:
         self.inputs.append(workflow_input)
-        return WorkflowFinalResult(
+        return QuestUnderstand_FinalResult(
             status="success",
             intent="sql",
             structured_output={
@@ -89,9 +89,9 @@ class StaticWorkflowExecutor:
 
 class FailingWorkflowExecutor:
     def __init__(self) -> None:
-        self.inputs: List[WorkflowInput] = []
+        self.inputs: List[QuestUnderstand_Input] = []
 
-    async def run(self, workflow_input: WorkflowInput) -> WorkflowFinalResult:
+    async def run(self, workflow_input: QuestUnderstand_Input) -> QuestUnderstand_FinalResult:
         self.inputs.append(workflow_input)
         raise RuntimeError("workflow boom")
 
@@ -125,8 +125,8 @@ class RecentTurnsFilter(ConversationFilter):
 class FinishWorkflowNode:
     node_id = "finish"
 
-    async def run(self, state: WorkflowState) -> NodeResult:
-        return NodeResult(status="finish")
+    async def run(self, state: QuestUnderstand_State) -> QuestUnderstand_NodeResult:
+        return QuestUnderstand_NodeResult(status="finish")
 
 
 class EmptyArgs(BaseModel):
@@ -156,8 +156,8 @@ class CaptureContextTool(Tool[EmptyArgs]):
 def create_agent(
     *,
     llm_service: LlmService,
-    pre_llm_workflow_executor: Any = None,
-    enable_pre_llm_workflow: bool = True,
+    question_understanding_subworkflow_executor: Any = None,
+    enable_question_understanding_subworkflow: bool = True,
     tool_registry: Optional[ToolRegistry] = None,
     conversation_store: Optional[MemoryConversationStore] = None,
     conversation_filters: Optional[List[ConversationFilter]] = None,
@@ -169,10 +169,10 @@ def create_agent(
         agent_memory=DemoAgentMemory(max_items=100),
         conversation_store=conversation_store,
         config=AgentConfig(
-            enable_pre_llm_workflow=enable_pre_llm_workflow,
+            enable_question_understanding_subworkflow=enable_question_understanding_subworkflow,
             stream_responses=False,
         ),
-        pre_llm_workflow_executor=pre_llm_workflow_executor,
+        question_understanding_subworkflow_executor=question_understanding_subworkflow_executor,
         conversation_filters=conversation_filters or [],
     )
 
@@ -192,12 +192,12 @@ async def drain_agent(
 
 
 @pytest.mark.asyncio
-async def test_agent_attaches_pre_llm_workflow_metadata_to_llm_request() -> None:
+async def test_agent_attaches_question_understanding_subworkflow_metadata_to_llm_request() -> None:
     llm = RecordingLlmService()
     workflow_executor = StaticWorkflowExecutor()
     agent = create_agent(
         llm_service=llm,
-        pre_llm_workflow_executor=workflow_executor,
+        question_understanding_subworkflow_executor=workflow_executor,
     )
 
     await drain_agent(agent)
@@ -207,7 +207,7 @@ async def test_agent_attaches_pre_llm_workflow_metadata_to_llm_request() -> None
     assert workflow_executor.inputs[0].metadata["conversation_history"] == []
     assert len(llm.requests) == 1
 
-    metadata = llm.requests[0].metadata["pre_llm_workflow"]
+    metadata = llm.requests[0].metadata["question_understanding_subworkflow"]
     assert metadata["status"] == "success"
     assert metadata["intent"] == "sql"
     assert metadata["structured_output"]["target_entity"] == "sales_order"
@@ -221,7 +221,7 @@ async def test_agent_attaches_pre_llm_workflow_metadata_to_llm_request() -> None
 
 
 @pytest.mark.asyncio
-async def test_agent_passes_filtered_previous_turns_to_pre_llm_workflow() -> None:
+async def test_agent_passes_filtered_previous_turns_to_question_understanding_subworkflow() -> None:
     llm = RecordingLlmService()
     workflow_executor = StaticWorkflowExecutor()
     conversation_store = MemoryConversationStore()
@@ -250,7 +250,7 @@ async def test_agent_passes_filtered_previous_turns_to_pre_llm_workflow() -> Non
 
     agent = create_agent(
         llm_service=llm,
-        pre_llm_workflow_executor=workflow_executor,
+        question_understanding_subworkflow_executor=workflow_executor,
         conversation_store=conversation_store,
         conversation_filters=[RecentTurnsFilter(max_turns=5)],
     )
@@ -288,8 +288,8 @@ async def test_agent_does_not_run_workflow_when_disabled() -> None:
     workflow_executor = StaticWorkflowExecutor()
     agent = create_agent(
         llm_service=llm,
-        pre_llm_workflow_executor=workflow_executor,
-        enable_pre_llm_workflow=False,
+        question_understanding_subworkflow_executor=workflow_executor,
+        enable_question_understanding_subworkflow=False,
     )
 
     await drain_agent(agent)
@@ -305,17 +305,17 @@ async def test_agent_continues_llm_request_when_workflow_raises() -> None:
     workflow_executor = FailingWorkflowExecutor()
     agent = create_agent(
         llm_service=llm,
-        pre_llm_workflow_executor=workflow_executor,
+        question_understanding_subworkflow_executor=workflow_executor,
     )
 
     await drain_agent(agent)
 
     assert len(workflow_executor.inputs) == 1
     assert len(llm.requests) == 1
-    metadata = llm.requests[0].metadata["pre_llm_workflow"]
+    metadata = llm.requests[0].metadata["question_understanding_subworkflow"]
     assert metadata["status"] == "failed"
     assert metadata["structured_output"] is None
-    assert metadata["errors"] == ["Pre-LLM workflow failed: workflow boom"]
+    assert metadata["errors"] == ["Question-Understanding workflow failed: workflow boom"]
 
 
 @pytest.mark.asyncio
@@ -337,14 +337,14 @@ async def test_agent_attaches_workflow_metadata_to_tool_context() -> None:
     )
     agent = create_agent(
         llm_service=llm,
-        pre_llm_workflow_executor=StaticWorkflowExecutor(),
+        question_understanding_subworkflow_executor=StaticWorkflowExecutor(),
         tool_registry=tools,
     )
 
     await drain_agent(agent)
 
     assert tool.captured_metadata is not None
-    workflow_metadata = tool.captured_metadata["pre_llm_workflow"]
+    workflow_metadata = tool.captured_metadata["question_understanding_subworkflow"]
     assert workflow_metadata["status"] == "success"
     assert workflow_metadata["structured_output"]["target_entity"] == "sales_order"
     assert tool.captured_metadata["structured_question"] == {
@@ -356,7 +356,7 @@ async def test_agent_attaches_workflow_metadata_to_tool_context() -> None:
 def test_agent_applies_configured_workflow_limits_to_executor() -> None:
     graph = WorkflowGraph()
     graph.add_node(FinishWorkflowNode(), start=True, end=True)
-    workflow_executor = PreLlmWorkflowExecutor(graph, max_steps=99, retry_limit=99)
+    workflow_executor = QuestionUnderstandSubWorkflowExecutor(graph, max_steps=99, retry_limit=99)
 
     Agent(
         llm_service=RecordingLlmService(),
@@ -364,12 +364,12 @@ def test_agent_applies_configured_workflow_limits_to_executor() -> None:
         user_resolver=SimpleUserResolver(),
         agent_memory=DemoAgentMemory(max_items=100),
         config=AgentConfig(
-            enable_pre_llm_workflow=True,
+            enable_question_understanding_subworkflow=True,
             max_workflow_steps=3,
             workflow_retry_limit=2,
             stream_responses=False,
         ),
-        pre_llm_workflow_executor=workflow_executor,
+        question_understanding_subworkflow_executor=workflow_executor,
     )
 
     assert workflow_executor.max_steps == 3

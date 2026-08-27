@@ -1,23 +1,23 @@
-"""Graph container for pre-LLM workflow nodes and edges."""
+"""Graph container for Question-Understanding workflow nodes and edges."""
 
 from __future__ import annotations
 from collections import defaultdict, deque
 from typing import DefaultDict, Dict, List, Optional, Set
 
-from .edge import EdgeCondition, WorkflowEdge
-from .node import WorkflowNode
+from .edge import EdgeCondition, QuestionUnderstand_Edge
+from .node import QuestionUnderstand_Node
 
 
 class WorkflowGraphError(ValueError):
-    """Raised when a pre-LLM workflow graph is invalid."""
+    """Raised when a Question-Understanding workflow graph is invalid."""
 
 
 class WorkflowGraph:
-    """Node-edge graph executed by PreLlmWorkflowExecutor."""
+    """Node-edge graph executed by QuestionUnderstandSubWorkflowExecutor."""
 
     def __init__(self) -> None:
-        self._nodes: Dict[str, WorkflowNode] = {}
-        self._edges_by_source: DefaultDict[str, List[WorkflowEdge]] = defaultdict(list)
+        self._nodes: Dict[str, QuestionUnderstand_Edge] = {}
+        self._edges_by_source: DefaultDict[str, List[QuestionUnderstand_Edge]] = defaultdict(list)
         self.start_node_id: Optional[str] = None
         self.end_node_ids: Set[str] = set()
 
@@ -27,7 +27,7 @@ class WorkflowGraph:
 
     def add_node(
         self,
-        node: WorkflowNode,
+        node: QuestionUnderstand_Node,
         *,
         start: bool = False,
         end: bool = False,
@@ -67,7 +67,7 @@ class WorkflowGraph:
         self._ensure_node_exists(target_node_id)
 
         self._edges_by_source[source_node_id].append(
-            WorkflowEdge(
+            QuestionUnderstand_Edge(
                 source_node_id=source_node_id,
                 target_node_id=target_node_id,
                 condition=condition,
@@ -76,11 +76,11 @@ class WorkflowGraph:
         )
         return self
 
-    def get_node(self, node_id: str) -> WorkflowNode:
+    def get_node(self, node_id: str) -> QuestionUnderstand_Node:
         self._ensure_node_exists(node_id)
         return self._nodes[node_id]
 
-    def get_edges(self, source_node_id: str) -> List[WorkflowEdge]:
+    def get_edges(self, source_node_id: str) -> List[QuestionUnderstand_Edge]:
         self._ensure_node_exists(source_node_id)
         return list(self._edges_by_source.get(source_node_id, []))
 

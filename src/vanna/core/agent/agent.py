@@ -1510,6 +1510,17 @@ class Agent:
                     main_workflow_turn_state.stage = "final_answer"
                     main_workflow_turn_state.operation = "final_answer"
 
+                # Tool 호출이 없는 최종 LLM 답변을 TurnState에 저장
+                if (
+                    main_workflow_turn_state is not None
+                    and response.content
+                ):
+                    main_workflow_turn_state.result["message"] = (
+                        response.content
+                    )
+
+                # stage와 최종 답변이 반영된 최신 snapshot 동기화
+                if main_workflow_turn_state is not None:
                     main_workflow_metadata = (
                         main_workflow_turn_state.to_metadata()
                     )

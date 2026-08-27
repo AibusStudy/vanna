@@ -12,6 +12,7 @@ from vanna.components import (
     SimpleTextComponent,
 )
 from vanna.capabilities.sql_runner import SqlRunner, RunSqlToolArgs
+from vanna.capabilities.sql_runner.statement import get_statement_type
 from vanna.capabilities.file_system import FileSystem
 from vanna.integrations.local import LocalFileSystem
 
@@ -61,7 +62,7 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
             df = await self.sql_runner.run_sql(args, context)
 
             # Determine query type
-            query_type = args.sql.strip().upper().split()[0]
+            query_type = get_statement_type(args.sql)
             display_sql = html.escape(" ".join(args.sql.split()))
 
             if query_type == "SELECT":

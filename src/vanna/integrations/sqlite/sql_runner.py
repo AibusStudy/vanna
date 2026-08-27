@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 
 from vanna.capabilities.sql_runner import SqlRunner, RunSqlToolArgs
+from vanna.capabilities.sql_runner.statement import get_statement_type
 from vanna.core.tool import ToolContext
 
 
@@ -41,7 +42,7 @@ class SqliteRunner(SqlRunner):
             cursor.execute(args.sql)
 
             # Determine if this is a SELECT query or modification query
-            query_type = args.sql.strip().upper().split()[0]
+            query_type = get_statement_type(args.sql)
 
             if query_type == "SELECT":
                 # Fetch results for SELECT queries

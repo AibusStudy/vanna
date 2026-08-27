@@ -123,10 +123,12 @@ class AgentConfig(BaseModel):
     audit_config: AuditConfig = Field(default_factory=AuditConfig)
 
     # Main workflow
+    # steps, limit 적용x
     # LLM request metadata에 mainworkflow 결과 붙일지, 저장 정책 필요할떄 사용
     attach_main_workflow_metadata: bool = Field(default=True)
     persist_main_workflow_metadata: bool = Field(default=False)
 
+    # steps, limit 적용x
     # Backward-compatible question-understanding metadata flags.
     # 기존 Pre-LLM에 사용하던 필드로 추후 삭제 예정
     # enable_question_understanding_subworkflow: bool = Field(default=False)

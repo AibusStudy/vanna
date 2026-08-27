@@ -163,6 +163,7 @@ class MainWorkflowTurnState:
             "json_name": None,
             "row_count": None,
             "columns": [],
+            "status": None,
         }
     )
 
@@ -263,6 +264,8 @@ class MainWorkflowTurnState:
             status=status,
         )
         self.attempts.append(attempt)
+        # result에는 가장 최근 SQL 실행 시도의 성공/실패 상태를 유지합니다.
+        self.result["status"] = attempt.status
         return attempt
 
     def to_metadata(self) -> dict[str, Any]:

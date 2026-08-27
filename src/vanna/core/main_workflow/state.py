@@ -104,6 +104,7 @@ class MainWorkflowInput:
     system_prompt: str | None
     tool_schemas: list[ToolSchema]
     tool_context: ToolContext
+    turn_number: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -111,6 +112,8 @@ class MainWorkflowInput:
 class MainWorkflowTurnState:
     turn_id: str
     original_question: str
+    conversation_id: str | None = None
+    turn_number: int = 1
 
     stage: MainWorkflowStage = "question_understanding"
     operation: str | None = None
@@ -265,6 +268,9 @@ class MainWorkflowTurnState:
     def to_metadata(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
+            "conversation_id": self.conversation_id,
+            "turn_number": self.turn_number,
+            "original_question": self.original_question,
             "stage": self.stage,
             "operation": self.operation,
             "fallback_state": {

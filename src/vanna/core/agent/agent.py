@@ -634,6 +634,11 @@ class Agent:
                     system_prompt=system_prompt,
                     tool_schemas=tool_schemas,
                     tool_context=context,
+                    turn_number=sum(
+                        1
+                        for conversation_message in conversation.messages
+                        if conversation_message.role == "user"
+                    ),
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,

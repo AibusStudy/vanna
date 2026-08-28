@@ -1610,7 +1610,8 @@ class Agent:
                 )
             else:
                 # SQL 저장 단계에서 tool을 호출하지 않고 바로 답변한 경우에도
-                # TurnState가 저장 단계에 머물지 않도록 최종 답변 단계로 전환
+                # 해당 응답을 최종 답변으로 사용하지 않고 final_answer용
+                # context를 구성해 LLM을 다시 호출합니다.
                 if (
                     main_workflow_turn_state is not None
                     and main_workflow_turn_state.stage
@@ -1618,6 +1619,48 @@ class Agent:
                 ):
                     main_workflow_turn_state.stage = "final_answer"
                     main_workflow_turn_state.operation = "final_answer"
+
+                    main_workflow_metadata = (
+                        main_workflow_turn_state.to_metadata()
+                    )
+                    context.metadata["main_workflow"] = (
+                        main_workflow_metadata
+                    )
+                    llm_request_metadata["main_workflow"] = (
+                        main_workflow_metadata
+                    )
+
+                    if (
+                        self.llm_context_enhancer is not None
+                        and workflow_base_system_prompt is not None
+                    ):
+                        system_prompt = await (
+                            self.llm_context_enhancer
+                            .enhance_system_prompt_with_workflow(
+                                workflow_base_system_prompt,
+                                message,
+                                user,
+                                workflow_state=(
+                                    main_workflow_turn_state
+                                ),
+                                workflow_metadata=(
+                                    main_workflow_metadata
+                                ),
+                            )
+                        )
+
+                    request = await self._build_llm_request(
+                        conversation,
+                        self._tool_schemas_for_workflow_stage(
+                            tool_schemas,
+                            main_workflow_turn_state.stage,
+                        ),
+                        user,
+                        system_prompt,
+                        metadata=llm_request_metadata,
+                        excluded_tool_call_ids=completed_tool_call_ids,
+                    )
+                    continue
 
                 # Tool 호출이 없는 최종 LLM 답변을 TurnState에 저장
                 if (
@@ -1721,6 +1764,16 @@ You can:
             main_workflow_metadata = main_workflow_turn_state.to_metadata()
             context.metadata["main_workflow"] = main_workflow_metadata
             _log_turn_state("sql_processing_finalized", main_workflow_turn_state)
+
+            # 실제 Agent 응답이 종료된 최신 TurnState를 저장합니다.
+            # SQL 성공 여부와 관계없이 최종 사용자 메시지가 있으면 저장해
+            # 다음 Turn의 history에서 참조할 수 있도록 합니다.
+            turn_state_store = getattr(self, "turn_state_store", None)
+            if (
+                turn_state_store is not None
+                and main_workflow_turn_state.result.get("message")
+            ):
+                await turn_state_store.save_turn(main_workflow_metadata)
 
         # Save conversation if configured
         if self.config.auto_save_conversations:

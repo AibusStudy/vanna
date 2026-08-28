@@ -794,6 +794,10 @@ class Agent:
                     "agent.system_prompt.duration", prompt_span.duration_ms() or 0, "ms"
                 )
 
+        # 현재 턴에서 TurnState 반영이 끝나 LLM 입력에서 제외할 Tool 호출 ID입니다.
+        # 원본 conversation에는 Tool 이력을 그대로 유지합니다.
+        completed_tool_call_ids: set[str] = set()
+
         # Build LLM request
         llm_request_metadata: Dict[str, Any] = {}
         attach_main_workflow_metadata = getattr(
@@ -1450,6 +1454,28 @@ class Agent:
                             "Failed to refresh workflow context "
                             "after tool execution"
                         )
+
+                # TurnState 저장과 context 재구성이 모두 끝난 Tool 호출만
+                # 다음 LLM 입력에서 호출/결과 쌍을 제외합니다.
+                if workflow_context_refresh_succeeded:
+                    for tool_result in tool_results:
+                        tool_name = tool_result["tool_name"]
+                        tool_succeeded = tool_result["success"]
+                        if (
+                            tool_succeeded
+                            and tool_name
+                            in {
+                                "search_business_metadata",
+                                "search_saved_correct_tool_uses",
+                            }
+                        ) or (
+                            not tool_succeeded
+                            and tool_name == "run_sql"
+                        ):
+                            completed_tool_call_ids.add(
+                                tool_result["tool_call_id"]
+                            )
+
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps
                 for tool_result in tool_results:
@@ -1512,6 +1538,7 @@ class Agent:
                     user,
                     system_prompt,
                     metadata=llm_request_metadata,
+                    excluded_tool_call_ids=completed_tool_call_ids,
                 )
             else:
                 # SQL 저장 단계에서 tool을 호출하지 않고 바로 답변한 경우에도
@@ -1743,11 +1770,18 @@ You can:
         user: User,
         system_prompt: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        excluded_tool_call_ids: Optional[set[str]] = None,
     ) -> LlmRequest:
         """Build LLM request from conversation and tools."""
         filtered_messages = await self._apply_conversation_filters(
             conversation.messages
         )
+
+        if excluded_tool_call_ids:
+            filtered_messages = self._exclude_tool_call_pairs(
+                filtered_messages,
+                excluded_tool_call_ids,
+            )
 
         messages = []
         for msg in filtered_messages:
@@ -1796,6 +1830,40 @@ You can:
             system_prompt=system_prompt,
             metadata=metadata or {},
         )
+
+    @staticmethod
+    def _exclude_tool_call_pairs(
+        messages: List[Message],
+        excluded_tool_call_ids: set[str],
+    ) -> List[Message]:
+        """완료된 Tool 호출과 결과를 LLM 입력에서만 제외합니다."""
+
+        filtered_messages: List[Message] = []
+        for message in messages:
+            if (
+                message.role == "tool"
+                and message.tool_call_id in excluded_tool_call_ids
+            ):
+                continue
+
+            if message.tool_calls:
+                remaining_tool_calls = [
+                    tool_call
+                    for tool_call in message.tool_calls
+                    if tool_call.id not in excluded_tool_call_ids
+                ]
+                if len(remaining_tool_calls) != len(message.tool_calls):
+                    if not remaining_tool_calls and not message.content.strip():
+                        continue
+                    message = message.model_copy(
+                        update={
+                            "tool_calls": remaining_tool_calls or None,
+                        }
+                    )
+
+            filtered_messages.append(message)
+
+        return filtered_messages
 
     async def _apply_conversation_filters(
         self,

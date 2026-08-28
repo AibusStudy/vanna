@@ -114,6 +114,7 @@ class MainWorkflowTurnState:
     original_question: str
     conversation_id: str | None = None
     turn_number: int = 1
+    history: dict[str, Any] = field(default_factory=dict)
 
     stage: MainWorkflowStage = "question_understanding"
     operation: str | None = None
@@ -273,6 +274,7 @@ class MainWorkflowTurnState:
             "turn_id": self.turn_id,
             "conversation_id": self.conversation_id,
             "turn_number": self.turn_number,
+            "history": dict(self.history),
             "original_question": self.original_question,
             "stage": self.stage,
             "operation": self.operation,

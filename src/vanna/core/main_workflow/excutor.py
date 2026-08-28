@@ -166,11 +166,17 @@ class MainWorkflowExecutor:
 
 
     async def run(self, input: MainWorkflowInput) -> MainWorkflowTurnState:
+        turn_history = input.metadata.get("turn_history", {})
         state = MainWorkflowTurnState(
             turn_id=input.request_id,
             original_question=input.original_message,
             conversation_id=input.conversation_id,
             turn_number=input.turn_number,
+            history=(
+                dict(turn_history)
+                if isinstance(turn_history, dict)
+                else {}
+            ),
         )
         _log_turn_state("initialized", state)
 

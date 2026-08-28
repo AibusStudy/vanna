@@ -621,11 +621,28 @@ class Agent:
 
         if self.main_workflow_executor:
             try:
-                filtered_conversation_history = (
-                    await self._apply_conversation_filters(
-                        conversation.messages[:-1]
-                    )
+                turn_history = request_context.metadata.get(
+                    "turn_history",
+                    {},
                 )
+                turn_history = (
+                    turn_history if isinstance(turn_history, dict) else {}
+                )
+                latest_turns = turn_history.get("latest", [])
+                latest_turns = (
+                    latest_turns if isinstance(latest_turns, list) else []
+                )
+                question_history = [
+                    {
+                        "turn_number": history_item.get("turn_number"),
+                        "question": history_item.get("question"),
+                        "structured_question": history_item.get(
+                            "structured_question"
+                        ),
+                    }
+                    for history_item in latest_turns
+                    if isinstance(history_item, dict)
+                ]
                 main_workflow_input = MainWorkflowInput(
                     user_id=user.id,
                     conversation_id=conversation_id,
@@ -634,21 +651,23 @@ class Agent:
                     system_prompt=system_prompt,
                     tool_schemas=tool_schemas,
                     tool_context=context,
-                    turn_number=sum(
-                        1
-                        for conversation_message in conversation.messages
-                        if conversation_message.role == "user"
+                    turn_number=(
+                        request_context.metadata["turn_number"]
+                        if isinstance(
+                            request_context.metadata.get("turn_number"),
+                            int,
+                        )
+                        else sum(
+                            1
+                            for conversation_message in conversation.messages
+                            if conversation_message.role == "user"
+                        )
                     ),
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,
-                        "conversation_history": [
-                            {
-                                "role": history_message.role,
-                                "content": history_message.content,
-                            }
-                            for history_message in filtered_conversation_history
-                        ],
+                        "turn_history": turn_history,
+                        "conversation_history": question_history,
                     },
                 )
 

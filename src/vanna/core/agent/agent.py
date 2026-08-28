@@ -797,6 +797,9 @@ class Agent:
         # 현재 턴에서 TurnState 반영이 끝나 LLM 입력에서 제외할 Tool 호출 ID입니다.
         # 원본 conversation에는 Tool 이력을 그대로 유지합니다.
         completed_tool_call_ids: set[str] = set()
+        # 가장 최근 실패한 run_sql 호출은 다음 run_sql이 실행될 때까지
+        # 짧은 실패 안내와 함께 LLM 입력에 유지합니다.
+        latest_failed_run_sql_tool_call_id: Optional[str] = None
 
         # Build LLM request
         llm_request_metadata: Dict[str, Any] = {}
@@ -1468,13 +1471,28 @@ class Agent:
                                 "search_business_metadata",
                                 "search_saved_correct_tool_uses",
                             }
-                        ) or (
-                            not tool_succeeded
-                            and tool_name == "run_sql"
                         ):
                             completed_tool_call_ids.add(
                                 tool_result["tool_call_id"]
                             )
+
+                        if tool_name == "run_sql":
+                            # 새로운 run_sql이 실행됐으므로 직전 실패 호출은
+                            # 더 이상 LLM 입력에 유지할 필요가 없습니다.
+                            if (
+                                latest_failed_run_sql_tool_call_id
+                                is not None
+                            ):
+                                completed_tool_call_ids.add(
+                                    latest_failed_run_sql_tool_call_id
+                                )
+
+                            if tool_succeeded:
+                                latest_failed_run_sql_tool_call_id = None
+                            else:
+                                latest_failed_run_sql_tool_call_id = (
+                                    tool_result["tool_call_id"]
+                                )
 
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps

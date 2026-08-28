@@ -531,7 +531,7 @@ class MainWorkflowExecutor:
 
     @staticmethod
     def _build_fb1_feedback(result_metadata: dict[str, Any]) -> dict[str, Any]:
-        failure_type = MainWorkflowExecutor._failure_type(result_metadata) or "question_understanding_failed"
+        failure_type = MainWorkflowExecutor._failure_type(result_metadata) or "search_queries_generation_failed"
         return {
             "fallback_id": "FB1",
             "failed_subflow": "question_understanding",

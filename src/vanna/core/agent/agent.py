@@ -1455,15 +1455,12 @@ class Agent:
                 for tool_result in tool_results:
                     tool_result_content = tool_result["content"]
 
-                    # 검색 결과가 TurnState에 저장되고
-                    # 최신 builder context 재구성까지 성공한 경우에만
-                    # raw ToolResult를 짧은 완료 메시지로 교체
-                    if (
-                        workflow_context_refresh_succeeded
-                        and tool_result["success"]
-                    ):
+                    # Tool 결과가 TurnState에 저장되고 최신 builder context
+                    # 재구성까지 성공한 경우 raw ToolResult를 축약합니다.
+                    if workflow_context_refresh_succeeded:
                         if (
-                            tool_result["tool_name"]
+                            tool_result["success"]
+                            and tool_result["tool_name"]
                             == "search_business_metadata"
                         ):
                             tool_result_content = (
@@ -1473,13 +1470,25 @@ class Agent:
                             )
 
                         elif (
-                            tool_result["tool_name"]
+                            tool_result["success"]
+                            and tool_result["tool_name"]
                             == "search_saved_correct_tool_uses"
                         ):
                             tool_result_content = (
                                 "Few-shot search completed. "
                                 "Any retrieved examples are available "
                                 "in the current turn context."
+                            )
+
+                        elif (
+                            not tool_result["success"]
+                            and tool_result["tool_name"] == "run_sql"
+                        ):
+                            tool_result_content = (
+                                "SQL execution failed. Refer to the latest "
+                                "failed attempt in MAIN WORKFLOW CONTEXT "
+                                "for the SQL and error, then correct and "
+                                "regenerate the SQL."
                             )
 
                     tool_response_message = Message(

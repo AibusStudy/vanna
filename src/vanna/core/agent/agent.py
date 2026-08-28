@@ -797,9 +797,9 @@ class Agent:
         # 현재 턴에서 TurnState 반영이 끝나 LLM 입력에서 제외할 Tool 호출 ID입니다.
         # 원본 conversation에는 Tool 이력을 그대로 유지합니다.
         completed_tool_call_ids: set[str] = set()
-        # 가장 최근 실패한 run_sql 호출은 다음 run_sql이 실행될 때까지
-        # 짧은 실패 안내와 함께 LLM 입력에 유지합니다.
-        latest_failed_run_sql_tool_call_id: Optional[str] = None
+        # 가장 최근 Tool batch에서 다음 LLM 판단까지 유지할 호출 ID입니다.
+        # 다음 Tool batch가 실행되면 completed_tool_call_ids로 이동합니다.
+        latest_removable_tool_batch_ids: set[str] = set()
 
         # Build LLM request
         llm_request_metadata: Dict[str, Any] = {}
@@ -1458,8 +1458,17 @@ class Agent:
                             "after tool execution"
                         )
 
-                # TurnState 저장과 context 재구성이 모두 끝난 Tool 호출만
-                # 다음 LLM 입력에서 호출/결과 쌍을 제외합니다.
+                # 새로운 Tool batch가 실행됐으므로 직전 batch의 완료 신호는
+                # 역할을 다했습니다. 원본 conversation은 유지하고 다음 LLM
+                # 입력에서만 직전 호출/결과 쌍을 제외합니다.
+                if tool_results:
+                    completed_tool_call_ids.update(
+                        latest_removable_tool_batch_ids
+                    )
+                    latest_removable_tool_batch_ids = set()
+
+                # TurnState 저장과 context 재구성이 모두 끝난 현재 batch의
+                # 제거 가능한 Tool은 다음 LLM 판단까지 한 번 유지합니다.
                 if workflow_context_refresh_succeeded:
                     for tool_result in tool_results:
                         tool_name = tool_result["tool_name"]
@@ -1471,28 +1480,13 @@ class Agent:
                                 "search_business_metadata",
                                 "search_saved_correct_tool_uses",
                             }
+                        ) or (
+                            not tool_succeeded
+                            and tool_name == "run_sql"
                         ):
-                            completed_tool_call_ids.add(
+                            latest_removable_tool_batch_ids.add(
                                 tool_result["tool_call_id"]
                             )
-
-                        if tool_name == "run_sql":
-                            # 새로운 run_sql이 실행됐으므로 직전 실패 호출은
-                            # 더 이상 LLM 입력에 유지할 필요가 없습니다.
-                            if (
-                                latest_failed_run_sql_tool_call_id
-                                is not None
-                            ):
-                                completed_tool_call_ids.add(
-                                    latest_failed_run_sql_tool_call_id
-                                )
-
-                            if tool_succeeded:
-                                latest_failed_run_sql_tool_call_id = None
-                            else:
-                                latest_failed_run_sql_tool_call_id = (
-                                    tool_result["tool_call_id"]
-                                )
 
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps

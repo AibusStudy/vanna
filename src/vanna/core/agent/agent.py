@@ -621,6 +621,24 @@ class Agent:
 
         if self.main_workflow_executor:
             try:
+                turn_state_store = getattr(self, "turn_state_store", None)
+                current_turn_number = request_context.metadata.get(
+                    "turn_number"
+                )
+                if not isinstance(current_turn_number, int):
+                    if turn_state_store is not None:
+                        current_turn_number = (
+                            await turn_state_store.get_next_turn_number(
+                                conversation_id
+                            )
+                        )
+                    else:
+                        current_turn_number = sum(
+                            1
+                            for conversation_message in conversation.messages
+                            if conversation_message.role == "user"
+                        )
+
                 turn_history = request_context.metadata.get(
                     "turn_history",
                     {},
@@ -628,6 +646,15 @@ class Agent:
                 turn_history = (
                     turn_history if isinstance(turn_history, dict) else {}
                 )
+                if not turn_history and turn_state_store is not None:
+                    turn_history = await turn_state_store.load_history(
+                        conversation_id=conversation_id,
+                        current_turn_number=current_turn_number,
+                    )
+
+                request_context.metadata["turn_number"] = current_turn_number
+                request_context.metadata["turn_history"] = turn_history
+
                 latest_turns = turn_history.get("latest", [])
                 latest_turns = (
                     latest_turns if isinstance(latest_turns, list) else []
@@ -651,18 +678,7 @@ class Agent:
                     system_prompt=system_prompt,
                     tool_schemas=tool_schemas,
                     tool_context=context,
-                    turn_number=(
-                        request_context.metadata["turn_number"]
-                        if isinstance(
-                            request_context.metadata.get("turn_number"),
-                            int,
-                        )
-                        else sum(
-                            1
-                            for conversation_message in conversation.messages
-                            if conversation_message.role == "user"
-                        )
-                    ),
+                    turn_number=current_turn_number,
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,

@@ -797,9 +797,11 @@ class Agent:
         # 현재 턴에서 TurnState 반영이 끝나 LLM 입력에서 제외할 Tool 호출 ID입니다.
         # 원본 conversation에는 Tool 이력을 그대로 유지합니다.
         completed_tool_call_ids: set[str] = set()
-        # 가장 최근 Tool batch에서 다음 LLM 판단까지 유지할 호출 ID입니다.
-        # 다음 Tool batch가 실행되면 completed_tool_call_ids로 이동합니다.
+        # 가장 최근 일반 Tool batch는 다음 Tool batch가 실행될 때까지 유지합니다.
         latest_removable_tool_batch_ids: set[str] = set()
+        # 실패한 run_sql은 metadata/few-shot 검색 중에도 유지하고,
+        # 새로운 run_sql이 실행될 때만 이전 호출을 제거합니다.
+        latest_failed_run_sql_tool_call_id: Optional[str] = None
 
         # Build LLM request
         llm_request_metadata: Dict[str, Any] = {}
@@ -1467,6 +1469,20 @@ class Agent:
                     )
                     latest_removable_tool_batch_ids = set()
 
+                    current_batch_has_run_sql = any(
+                        tool_result["tool_name"] == "run_sql"
+                        for tool_result in tool_results
+                    )
+                    if (
+                        current_batch_has_run_sql
+                        and latest_failed_run_sql_tool_call_id
+                        is not None
+                    ):
+                        completed_tool_call_ids.add(
+                            latest_failed_run_sql_tool_call_id
+                        )
+                        latest_failed_run_sql_tool_call_id = None
+
                 # TurnState 저장과 context 재구성이 모두 끝난 현재 batch의
                 # 제거 가능한 Tool은 다음 LLM 판단까지 한 번 유지합니다.
                 if workflow_context_refresh_succeeded:
@@ -1480,11 +1496,16 @@ class Agent:
                                 "search_business_metadata",
                                 "search_saved_correct_tool_uses",
                             }
-                        ) or (
+                        ):
+                            latest_removable_tool_batch_ids.add(
+                                tool_result["tool_call_id"]
+                            )
+
+                        if (
                             not tool_succeeded
                             and tool_name == "run_sql"
                         ):
-                            latest_removable_tool_batch_ids.add(
+                            latest_failed_run_sql_tool_call_id = (
                                 tool_result["tool_call_id"]
                             )
 

@@ -95,6 +95,40 @@ class SqlAttemptState:
         }
 
 
+@dataclass
+class CsvReferenceState:
+    """현재 사용자 질문에서 CSV 사용 의도를 판별한 결과입니다."""
+
+    mentioned: bool = False
+    filename: str | None = None
+    resolution: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "mentioned": self.mentioned,
+            "filename": self.filename,
+            "resolution": self.resolution,
+        }
+
+
+@dataclass
+class ActiveDatasetState:
+    """CsvToJsonTool이 실제로 준비한 Dataset의 작은 참조 정보입니다."""
+
+    dataset_id: str
+    source_csv: str
+    schema_file: str
+    schema: dict[str, Any] = field(default_factory=dict)
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "dataset_id": self.dataset_id,
+            "source_csv": self.source_csv,
+            "schema_file": self.schema_file,
+            "schema": dict(self.schema),
+        }
+
+
 @dataclass(frozen=True)
 class MainWorkflowInput:
     user_id: str
@@ -115,6 +149,8 @@ class MainWorkflowTurnState:
     conversation_id: str | None = None
     turn_number: int = 1
     history: dict[str, Any] = field(default_factory=dict)
+    csv_reference: CsvReferenceState = field(default_factory=CsvReferenceState)
+    active_dataset: ActiveDatasetState | None = None
 
     stage: MainWorkflowStage = "question_understanding"
     operation: str | None = None
@@ -269,12 +305,43 @@ class MainWorkflowTurnState:
         self.result["status"] = attempt.status
         return attempt
 
+    def record_active_dataset(
+        self,
+        *,
+        dataset_id: str,
+        source_csv: str,
+        schema_file: str,
+        schema: dict[str, Any],
+    ) -> ActiveDatasetState:
+        """CsvToJsonTool이 준비한 Dataset의 참조 정보만 기록합니다."""
+        active_dataset = ActiveDatasetState(
+            dataset_id=dataset_id,
+            source_csv=source_csv,
+            schema_file=schema_file,
+            schema=dict(schema),
+        )
+        self.active_dataset = active_dataset
+
+        # 사용자가 "이 CSV"라고만 말해 파일명이 미해결이었던 경우,
+        # 실제로 준비된 파일명으로 판별 상태도 함께 확정합니다.
+        if self.csv_reference.filename is None:
+            self.csv_reference.filename = source_csv
+            self.csv_reference.resolution = "tool_resolved_filename"
+
+        return active_dataset
+
     def to_metadata(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
             "conversation_id": self.conversation_id,
             "turn_number": self.turn_number,
             "history": dict(self.history),
+            "csv_reference": self.csv_reference.to_metadata(),
+            "active_dataset": (
+                self.active_dataset.to_metadata()
+                if self.active_dataset is not None
+                else None
+            ),
             "original_question": self.original_question,
             "stage": self.stage,
             "operation": self.operation,

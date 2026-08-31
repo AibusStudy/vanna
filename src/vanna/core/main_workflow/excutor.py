@@ -7,7 +7,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
@@ -22,7 +22,7 @@ try:
 except ImportError:
     DataDiscover_Input = None
 
-from .state import MainWorkflowInput, MainWorkflowTurnState
+from .state import CsvReferenceState, MainWorkflowInput, MainWorkflowTurnState
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,7 @@ class MainWorkflowExecutor:
         question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
         data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
+        csv_reference_detector: Callable[[str], dict[str, Any]] | None = None,
 
         # steps, limit 적용x
         # max_workflow_steps, workflow_retry_limit는 현재 MainWorkflowExecutor에서 적용하지 않는다.
@@ -140,6 +141,7 @@ class MainWorkflowExecutor:
         self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
+        self.csv_reference_detector = csv_reference_detector
 
     #     self._apply_subworkflow_limits(
     #         self.question_understanding_executor,
@@ -178,7 +180,44 @@ class MainWorkflowExecutor:
                 else {}
             ),
         )
+        if self.csv_reference_detector is not None:
+            detected = self.csv_reference_detector(input.original_message)
+            state.csv_reference = CsvReferenceState(
+                mentioned=bool(detected.get("mentioned", False)),
+                filename=detected.get("filename"),
+                resolution=detected.get("resolution"),
+            )
+            if (
+                state.csv_reference.mentioned
+                and state.csv_reference.filename is None
+            ):
+                history_csv_name = self._latest_history_csv_name(
+                    state.history
+                )
+                if history_csv_name is not None:
+                    state.csv_reference.filename = history_csv_name
+                    state.csv_reference.resolution = (
+                        "latest_successful_turn"
+                    )
+                else:
+                    state.operation = "clarification_required"
+                    state.result["message"] = (
+                        "현재 대화에서 연속 분석에 사용할 수 있는 CSV 결과를 "
+                        "찾지 못했습니다. 먼저 SQL 조회를 실행해 CSV 결과를 "
+                        "생성하거나, 사용할 CSV 파일명을 알려주세요. "
+                        "추가 도구를 호출하거나 SQL을 생성하지 말고 이 내용을 "
+                        "사용자에게 안내하세요."
+                    )
+            if (
+                state.csv_reference.mentioned
+                and state.csv_reference.filename is not None
+            ):
+                state.operation = "continuous_analysis_dataset_required"
         _log_turn_state("initialized", state)
+
+        if state.operation == "clarification_required":
+            _log_turn_state("csv_reference_unresolved", state)
+            return state
 
         await self._run_question_understanding_with_fb1(input, state)
         _log_turn_state("question_understanding_saved", state)
@@ -195,13 +234,36 @@ class MainWorkflowExecutor:
                 _log_turn_state("data_discovery_saved", state)
 
         state.stage = "context_enrichment"
-        if state.operation not in {"clarification_required", "continue_with_warning"}:
+        if state.operation not in {
+            "clarification_required",
+            "continue_with_warning",
+            "continuous_analysis_dataset_required",
+        }:
             state.operation = "context_enrichment_ready"
         if is_non_sql_intent:
             _log_turn_state_summary("context_enrichment_ready", state)
         else:
             _log_turn_state("context_enrichment_ready", state)
         return state
+
+    @staticmethod
+    def _latest_history_csv_name(
+        history: dict[str, Any],
+    ) -> str | None:
+        """최신 구간부터 가장 최근의 성공 CSV 파일명을 찾습니다."""
+        for section_name in ("latest", "recent", "older"):
+            items = history.get(section_name, [])
+            if not isinstance(items, list):
+                continue
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                csv_name = item.get("csv_name")
+                if isinstance(csv_name, str) and csv_name.strip():
+                    return csv_name.strip()
+
+        return None
 
     @staticmethod
     def _is_non_sql_intent(state: MainWorkflowTurnState) -> bool:

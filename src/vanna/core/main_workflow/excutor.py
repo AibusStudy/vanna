@@ -375,6 +375,15 @@ class MainWorkflowExecutor:
         structured_output_override: dict[str, Any] | None = None,
         continue_with_warning: bool = False,
     ) -> dict[str, Any]:
+        metadata_recovery = self._is_json_validation_recovery(state)
+        if metadata_recovery:
+            state.metadata["searches"] = []
+            structured_output_override = {
+                "intent": "sql",
+                "question": state.original_question,
+                "original_question": state.original_question,
+            }
+
         subflow_state = state.subflow("data_discovery")
         state.stage = "data_discovery"
         state.operation = "run_data_discovery"
@@ -393,6 +402,8 @@ class MainWorkflowExecutor:
             result_metadata = self._to_metadata(result)
 
             self._apply_data_discovery_result(state, result_metadata)
+            if metadata_recovery:
+                state.metadata["searches"] = []
             _log_turn_state("data_discovery_result_assigned", state)
 
             subflow_state.status = result_metadata.get("status", "success")
@@ -426,12 +437,32 @@ class MainWorkflowExecutor:
 
         question_subflow = state.subflow("question_understanding")
         structured_output = structured_output_override or state.structured_question
+        metadata_recovery = (
+            structured_output_override is not None
+            and self._is_json_validation_recovery(state)
+        )
         return DataDiscover_Input(
-            status=question_subflow.status,
+            status="success" if metadata_recovery else question_subflow.status,
             intent=structured_output.get("intent"),
             structured_output=structured_output,
             errors=question_subflow.errors,
             retry_counts=question_subflow.retry_counts,
+        )
+
+    @staticmethod
+    def _is_json_validation_retry_exceeded(errors: list[str]) -> bool:
+        error_text = "\n".join(str(error) for error in errors)
+        return (
+            "JSON_VALIDATION_FAILED: Generated JSON validation failed after retry limit."
+            in error_text
+        )
+
+    def _is_json_validation_recovery(self, state: MainWorkflowTurnState) -> bool:
+        question_subflow = state.subflow("question_understanding")
+        return (
+            question_subflow.status == "failed"
+            and self._is_json_validation_retry_exceeded(question_subflow.errors)
+            and bool(state.original_question.strip())
         )
 
     async def _run_data_discovery_executor(
@@ -452,10 +483,17 @@ class MainWorkflowExecutor:
 
     def _should_run_data_discovery(self, state: MainWorkflowTurnState) -> bool:
         question_subflow = state.subflow("question_understanding")
-        return (
+        if (
             question_subflow.status == "success"
             and state.structured_question.get("intent") == "sql"
             and bool(state.structured_question)
+        ):
+            return True
+
+        return (
+            question_subflow.status == "failed"
+            and self._is_json_validation_retry_exceeded(question_subflow.errors)
+            and bool(state.original_question.strip())
         )
 
     def _apply_data_discovery_result(

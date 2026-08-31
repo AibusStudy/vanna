@@ -7,7 +7,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
@@ -22,7 +22,7 @@ try:
 except ImportError:
     DataDiscover_Input = None
 
-from .state import MainWorkflowInput, MainWorkflowTurnState
+from .state import CsvReferenceState, MainWorkflowInput, MainWorkflowTurnState
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,7 @@ class MainWorkflowExecutor:
         question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
         data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
+        csv_reference_detector: Callable[[str], dict[str, Any]] | None = None,
 
         # steps, limit 적용x
         # max_workflow_steps, workflow_retry_limit는 현재 MainWorkflowExecutor에서 적용하지 않는다.
@@ -140,6 +141,7 @@ class MainWorkflowExecutor:
         self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
+        self.csv_reference_detector = csv_reference_detector
 
     #     self._apply_subworkflow_limits(
     #         self.question_understanding_executor,
@@ -178,6 +180,13 @@ class MainWorkflowExecutor:
                 else {}
             ),
         )
+        if self.csv_reference_detector is not None:
+            detected = self.csv_reference_detector(input.original_message)
+            state.csv_reference = CsvReferenceState(
+                mentioned=bool(detected.get("mentioned", False)),
+                filename=detected.get("filename"),
+                resolution=detected.get("resolution"),
+            )
         _log_turn_state("initialized", state)
 
         await self._run_question_understanding_with_fb1(input, state)

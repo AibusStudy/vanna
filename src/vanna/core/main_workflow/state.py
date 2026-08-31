@@ -95,6 +95,40 @@ class SqlAttemptState:
         }
 
 
+@dataclass
+class CsvReferenceState:
+    """현재 사용자 질문에서 CSV 사용 의도를 판별한 결과입니다."""
+
+    mentioned: bool = False
+    filename: str | None = None
+    resolution: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "mentioned": self.mentioned,
+            "filename": self.filename,
+            "resolution": self.resolution,
+        }
+
+
+@dataclass
+class ActiveDatasetState:
+    """CsvToJsonTool이 실제로 준비한 Dataset의 작은 참조 정보입니다."""
+
+    dataset_id: str
+    source_csv: str
+    schema_file: str
+    schema: dict[str, Any] = field(default_factory=dict)
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "dataset_id": self.dataset_id,
+            "source_csv": self.source_csv,
+            "schema_file": self.schema_file,
+            "schema": dict(self.schema),
+        }
+
+
 @dataclass(frozen=True)
 class MainWorkflowInput:
     user_id: str
@@ -115,6 +149,8 @@ class MainWorkflowTurnState:
     conversation_id: str | None = None
     turn_number: int = 1
     history: dict[str, Any] = field(default_factory=dict)
+    csv_reference: CsvReferenceState = field(default_factory=CsvReferenceState)
+    active_dataset: ActiveDatasetState | None = None
 
     stage: MainWorkflowStage = "question_understanding"
     operation: str | None = None
@@ -275,6 +311,12 @@ class MainWorkflowTurnState:
             "conversation_id": self.conversation_id,
             "turn_number": self.turn_number,
             "history": dict(self.history),
+            "csv_reference": self.csv_reference.to_metadata(),
+            "active_dataset": (
+                self.active_dataset.to_metadata()
+                if self.active_dataset is not None
+                else None
+            ),
             "original_question": self.original_question,
             "stage": self.stage,
             "operation": self.operation,

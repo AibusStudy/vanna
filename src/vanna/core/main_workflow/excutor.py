@@ -7,7 +7,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
@@ -22,7 +22,7 @@ try:
 except ImportError:
     DataDiscover_Input = None
 
-from .state import MainWorkflowInput, MainWorkflowTurnState
+from .state import CsvReferenceState, MainWorkflowInput, MainWorkflowTurnState
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,7 @@ class MainWorkflowExecutor:
         question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
         data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
+        csv_reference_detector: Callable[[str], dict[str, Any]] | None = None,
 
         # steps, limit 적용x
         # max_workflow_steps, workflow_retry_limit는 현재 MainWorkflowExecutor에서 적용하지 않는다.
@@ -140,6 +141,7 @@ class MainWorkflowExecutor:
         self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
+        self.csv_reference_detector = csv_reference_detector
 
     #     self._apply_subworkflow_limits(
     #         self.question_understanding_executor,
@@ -166,13 +168,56 @@ class MainWorkflowExecutor:
 
 
     async def run(self, input: MainWorkflowInput) -> MainWorkflowTurnState:
+        turn_history = input.metadata.get("turn_history", {})
         state = MainWorkflowTurnState(
             turn_id=input.request_id,
             original_question=input.original_message,
             conversation_id=input.conversation_id,
             turn_number=input.turn_number,
+            history=(
+                dict(turn_history)
+                if isinstance(turn_history, dict)
+                else {}
+            ),
         )
+        if self.csv_reference_detector is not None:
+            detected = self.csv_reference_detector(input.original_message)
+            state.csv_reference = CsvReferenceState(
+                mentioned=bool(detected.get("mentioned", False)),
+                filename=detected.get("filename"),
+                resolution=detected.get("resolution"),
+            )
+            if (
+                state.csv_reference.mentioned
+                and state.csv_reference.filename is None
+            ):
+                history_csv_name = self._latest_history_csv_name(
+                    state.history
+                )
+                if history_csv_name is not None:
+                    state.csv_reference.filename = history_csv_name
+                    state.csv_reference.resolution = (
+                        "latest_successful_turn"
+                    )
+                else:
+                    state.operation = "clarification_required"
+                    state.result["message"] = (
+                        "현재 대화에서 연속 분석에 사용할 수 있는 CSV 결과를 "
+                        "찾지 못했습니다. 먼저 SQL 조회를 실행해 CSV 결과를 "
+                        "생성하거나, 사용할 CSV 파일명을 알려주세요. "
+                        "추가 도구를 호출하거나 SQL을 생성하지 말고 이 내용을 "
+                        "사용자에게 안내하세요."
+                    )
+            if (
+                state.csv_reference.mentioned
+                and state.csv_reference.filename is not None
+            ):
+                state.operation = "continuous_analysis_dataset_required"
         _log_turn_state("initialized", state)
+
+        if state.operation == "clarification_required":
+            _log_turn_state("csv_reference_unresolved", state)
+            return state
 
         await self._run_question_understanding_with_fb1(input, state)
         _log_turn_state("question_understanding_saved", state)
@@ -189,13 +234,36 @@ class MainWorkflowExecutor:
                 _log_turn_state("data_discovery_saved", state)
 
         state.stage = "context_enrichment"
-        if state.operation not in {"clarification_required", "continue_with_warning"}:
+        if state.operation not in {
+            "clarification_required",
+            "continue_with_warning",
+            "continuous_analysis_dataset_required",
+        }:
             state.operation = "context_enrichment_ready"
         if is_non_sql_intent:
             _log_turn_state_summary("context_enrichment_ready", state)
         else:
             _log_turn_state("context_enrichment_ready", state)
         return state
+
+    @staticmethod
+    def _latest_history_csv_name(
+        history: dict[str, Any],
+    ) -> str | None:
+        """최신 구간부터 가장 최근의 성공 CSV 파일명을 찾습니다."""
+        for section_name in ("latest", "recent", "older"):
+            items = history.get(section_name, [])
+            if not isinstance(items, list):
+                continue
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                csv_name = item.get("csv_name")
+                if isinstance(csv_name, str) and csv_name.strip():
+                    return csv_name.strip()
+
+        return None
 
     @staticmethod
     def _is_non_sql_intent(state: MainWorkflowTurnState) -> bool:
@@ -225,7 +293,10 @@ class MainWorkflowExecutor:
             _log_turn_state("fb1_marked", state)
             result_metadata = await self._run_question_understanding_once(input, state)
 
-        if result_metadata.get("status") == "failed":
+        if (
+            result_metadata.get("status") == "failed"
+            and not self._is_json_validation_recovery_result(result_metadata)
+        ):
             self._assign_clarification_result(
                 state,
                 failed_subflow="question_understanding",
@@ -273,10 +344,19 @@ class MainWorkflowExecutor:
             subflow_state.status = result_metadata.get("status", "success")
             subflow_state.errors = list(result_metadata.get("errors", []))
             subflow_state.retry_counts = dict(result_metadata.get("retry_counts", {}))
+            subflow_state.failed_node_id = result_metadata.get("failed_node_id")
+            subflow_state.failure_type = self._failure_type(result_metadata)
+            subflow_state.failure_detail = result_metadata.get("failure_detail")
             return result_metadata
         except Exception as exc:
             subflow_state.status = "failed"
             subflow_state.errors.append(str(exc))
+            subflow_state.failed_node_id = "question_understanding_subworkflow"
+            subflow_state.failure_type = "question_structuring_failed"
+            subflow_state.failure_detail = {
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            }
             state.structured_question = {}
             result_metadata = {
                 "status": "failed",
@@ -375,6 +455,11 @@ class MainWorkflowExecutor:
         structured_output_override: dict[str, Any] | None = None,
         continue_with_warning: bool = False,
     ) -> dict[str, Any]:
+        metadata_recovery = self._is_json_validation_recovery(state)
+        if metadata_recovery:
+            state.metadata["searches"] = []
+            structured_output_override = self._json_validation_recovery_structured_output(state)
+
         subflow_state = state.subflow("data_discovery")
         state.stage = "data_discovery"
         state.operation = "run_data_discovery"
@@ -393,6 +478,8 @@ class MainWorkflowExecutor:
             result_metadata = self._to_metadata(result)
 
             self._apply_data_discovery_result(state, result_metadata)
+            if metadata_recovery:
+                state.metadata["searches"] = []
             _log_turn_state("data_discovery_result_assigned", state)
 
             subflow_state.status = result_metadata.get("status", "success")
@@ -400,10 +487,19 @@ class MainWorkflowExecutor:
                 subflow_state.status = "success"
             subflow_state.errors = list(result_metadata.get("errors", []))
             subflow_state.retry_counts = dict(result_metadata.get("retry_counts", {}))
+            subflow_state.failed_node_id = result_metadata.get("failed_node_id")
+            subflow_state.failure_type = self._failure_type(result_metadata)
+            subflow_state.failure_detail = result_metadata.get("failure_detail")
             return result_metadata
         except Exception as exc:
             subflow_state.status = "failed"
             subflow_state.errors.append(str(exc))
+            subflow_state.failed_node_id = "data_discovery_subworkflow"
+            subflow_state.failure_type = "metadata_execution_error"
+            subflow_state.failure_detail = {
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            }
             state.metadata = {"searches": [], "candidates": [], "selected": []}
             state.fewshot = []
             result_metadata = {
@@ -426,12 +522,43 @@ class MainWorkflowExecutor:
 
         question_subflow = state.subflow("question_understanding")
         structured_output = structured_output_override or state.structured_question
+        metadata_recovery = (
+            structured_output_override is not None
+            and self._is_json_validation_recovery(state)
+        )
         return DataDiscover_Input(
-            status=question_subflow.status,
+            status="success" if metadata_recovery else question_subflow.status,
             intent=structured_output.get("intent"),
             structured_output=structured_output,
             errors=question_subflow.errors,
             retry_counts=question_subflow.retry_counts,
+        )
+
+    @staticmethod
+    def _is_json_validation_retry_exceeded(errors: list[str]) -> bool:
+        error_text = "\n".join(str(error) for error in errors)
+        return (
+            "JSON_VALIDATION_FAILED: Generated JSON validation failed after retry limit."
+            in error_text
+        )
+
+    def _is_json_validation_recovery_result(self, result_metadata: dict[str, Any]) -> bool:
+        return (
+            self._failure_type(result_metadata) == "json_validation_retry_exceeded"
+            or self._is_json_validation_retry_exceeded(
+                list(result_metadata.get("errors", []))
+            )
+        )
+
+    def _is_json_validation_recovery(self, state: MainWorkflowTurnState) -> bool:
+        question_subflow = state.subflow("question_understanding")
+        return (
+            question_subflow.status == "failed"
+            and (
+                question_subflow.failure_type == "json_validation_retry_exceeded"
+                or self._is_json_validation_retry_exceeded(question_subflow.errors)
+            )
+            and bool(state.original_question.strip())
         )
 
     async def _run_data_discovery_executor(
@@ -452,10 +579,20 @@ class MainWorkflowExecutor:
 
     def _should_run_data_discovery(self, state: MainWorkflowTurnState) -> bool:
         question_subflow = state.subflow("question_understanding")
-        return (
+        if (
             question_subflow.status == "success"
             and state.structured_question.get("intent") == "sql"
             and bool(state.structured_question)
+        ):
+            return True
+
+        return (
+            question_subflow.status == "failed"
+            and (
+                question_subflow.failure_type == "json_validation_retry_exceeded"
+                or self._is_json_validation_retry_exceeded(question_subflow.errors)
+            )
+            and bool(state.original_question.strip())
         )
 
     def _apply_data_discovery_result(
@@ -482,6 +619,49 @@ class MainWorkflowExecutor:
             "question": state.original_question,
             "original_question": state.original_question,
         }
+
+    def _json_validation_recovery_structured_output(
+        self,
+        state: MainWorkflowTurnState,
+    ) -> dict[str, Any]:
+        structured_output = {
+            key: value
+            for key, value in state.structured_question.items()
+            if key not in {"search_plan", "search_queries"}
+        }
+        question_subflow = state.subflow("question_understanding")
+        error_message = self._json_validation_recovery_error_message(question_subflow)
+        structured_output.update(
+            {
+                "intent": "sql",
+                "question": state.original_question,
+                "original_question": state.original_question,
+                "metadata_discovery_recovery": {
+                    "source_subflow": "question_understanding",
+                    "source_node_id": question_subflow.failed_node_id,
+                    "failure_type": question_subflow.failure_type,
+                    "error_message": error_message,
+                },
+            }
+        )
+        if error_message:
+            structured_output["metadata_discovery_question"] = (
+                f"{state.original_question}\n\n"
+                f"JSON validation error: {error_message}"
+            )
+        return structured_output
+
+    @staticmethod
+    def _json_validation_recovery_error_message(subflow_state: Any) -> str | None:
+        failure_detail = getattr(subflow_state, "failure_detail", None)
+        if isinstance(failure_detail, dict):
+            error = failure_detail.get("error")
+            if isinstance(error, str) and error.strip():
+                return error.strip()
+        for error in getattr(subflow_state, "errors", []) or []:
+            if isinstance(error, str) and error.strip():
+                return error.strip()
+        return None
 
     def _convert_metadata_execution_error_to_warning(
         self,

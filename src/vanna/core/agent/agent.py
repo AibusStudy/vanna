@@ -621,11 +621,55 @@ class Agent:
 
         if self.main_workflow_executor:
             try:
-                filtered_conversation_history = (
-                    await self._apply_conversation_filters(
-                        conversation.messages[:-1]
-                    )
+                turn_state_store = getattr(self, "turn_state_store", None)
+                current_turn_number = request_context.metadata.get(
+                    "turn_number"
                 )
+                if not isinstance(current_turn_number, int):
+                    if turn_state_store is not None:
+                        current_turn_number = (
+                            await turn_state_store.get_next_turn_number(
+                                conversation_id
+                            )
+                        )
+                    else:
+                        current_turn_number = sum(
+                            1
+                            for conversation_message in conversation.messages
+                            if conversation_message.role == "user"
+                        )
+
+                turn_history = request_context.metadata.get(
+                    "turn_history",
+                    {},
+                )
+                turn_history = (
+                    turn_history if isinstance(turn_history, dict) else {}
+                )
+                if not turn_history and turn_state_store is not None:
+                    turn_history = await turn_state_store.load_history(
+                        conversation_id=conversation_id,
+                        current_turn_number=current_turn_number,
+                    )
+
+                request_context.metadata["turn_number"] = current_turn_number
+                request_context.metadata["turn_history"] = turn_history
+
+                latest_turns = turn_history.get("latest", [])
+                latest_turns = (
+                    latest_turns if isinstance(latest_turns, list) else []
+                )
+                question_history = [
+                    {
+                        "turn_number": history_item.get("turn_number"),
+                        "question": history_item.get("question"),
+                        "structured_question": history_item.get(
+                            "structured_question"
+                        ),
+                    }
+                    for history_item in latest_turns
+                    if isinstance(history_item, dict)
+                ]
                 main_workflow_input = MainWorkflowInput(
                     user_id=user.id,
                     conversation_id=conversation_id,
@@ -634,21 +678,12 @@ class Agent:
                     system_prompt=system_prompt,
                     tool_schemas=tool_schemas,
                     tool_context=context,
-                    turn_number=sum(
-                        1
-                        for conversation_message in conversation.messages
-                        if conversation_message.role == "user"
-                    ),
+                    turn_number=current_turn_number,
                     metadata={
                         "request_context": request_context.metadata,
                         "tool_context": context.metadata,
-                        "conversation_history": [
-                            {
-                                "role": history_message.role,
-                                "content": history_message.content,
-                            }
-                            for history_message in filtered_conversation_history
-                        ],
+                        "turn_history": turn_history,
+                        "conversation_history": question_history,
                     },
                 )
 
@@ -710,9 +745,14 @@ class Agent:
             main_workflow_turn_state.stage = (
                 "sql_generation"
             )
-            main_workflow_turn_state.operation = (
-                "sql_generation"
-            )
+            if main_workflow_turn_state.operation not in {
+                "clarification_required",
+                "continue_with_warning",
+                "continuous_analysis_dataset_required",
+            }:
+                main_workflow_turn_state.operation = (
+                    "sql_generation"
+                )
 
             main_workflow_metadata = (
                 main_workflow_turn_state.to_metadata()
@@ -793,6 +833,15 @@ class Agent:
                 await self.observability_provider.record_metric(
                     "agent.system_prompt.duration", prompt_span.duration_ms() or 0, "ms"
                 )
+
+        # 현재 턴에서 TurnState 반영이 끝나 LLM 입력에서 제외할 Tool 호출 ID입니다.
+        # 원본 conversation에는 Tool 이력을 그대로 유지합니다.
+        completed_tool_call_ids: set[str] = set()
+        # 가장 최근 일반 Tool batch는 다음 Tool batch가 실행될 때까지 유지합니다.
+        latest_removable_tool_batch_ids: set[str] = set()
+        # 실패한 run_sql은 metadata/few-shot 검색 중에도 유지하고,
+        # 새로운 run_sql이 실행될 때만 이전 호출을 제거합니다.
+        latest_failed_run_sql_tool_call_id: Optional[str] = None
 
         # Build LLM request
         llm_request_metadata: Dict[str, Any] = {}
@@ -1188,6 +1237,40 @@ class Agent:
                             main_workflow_turn_state.operation = (
                                 "fewshot_search"
                             ) 
+
+                    ## 연속 분석용 Dataset 참조 정보 저장
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name == "csv_to_json"
+                    ):
+                        tool_metadata = result.metadata or {}
+                        dataset_id = tool_metadata.get("dataset_id")
+                        source_csv = tool_metadata.get("source_csv")
+                        schema_file = tool_metadata.get("schema_file")
+                        schema = tool_metadata.get("schema")
+
+                        if (
+                            isinstance(dataset_id, str)
+                            and isinstance(source_csv, str)
+                            and isinstance(schema_file, str)
+                            and isinstance(schema, dict)
+                        ):
+                            main_workflow_turn_state.record_active_dataset(
+                                dataset_id=dataset_id,
+                                source_csv=source_csv,
+                                schema_file=schema_file,
+                                schema=schema,
+                            )
+                            main_workflow_turn_state.operation = (
+                                "continuous_analysis_dataset_ready"
+                            )
+                            state_changed = True
+                            workflow_context_refresh_required = True
+                            _log_turn_state(
+                                "active_dataset_saved",
+                                main_workflow_turn_state,
+                            )
                     
                     if state_changed:
                         main_workflow_metadata = (
@@ -1450,20 +1533,67 @@ class Agent:
                             "Failed to refresh workflow context "
                             "after tool execution"
                         )
+
+                # 새로운 Tool batch가 실행됐으므로 직전 batch의 완료 신호는
+                # 역할을 다했습니다. 원본 conversation은 유지하고 다음 LLM
+                # 입력에서만 직전 호출/결과 쌍을 제외합니다.
+                if tool_results:
+                    completed_tool_call_ids.update(
+                        latest_removable_tool_batch_ids
+                    )
+                    latest_removable_tool_batch_ids = set()
+
+                    current_batch_has_run_sql = any(
+                        tool_result["tool_name"] == "run_sql"
+                        for tool_result in tool_results
+                    )
+                    if (
+                        current_batch_has_run_sql
+                        and latest_failed_run_sql_tool_call_id
+                        is not None
+                    ):
+                        completed_tool_call_ids.add(
+                            latest_failed_run_sql_tool_call_id
+                        )
+                        latest_failed_run_sql_tool_call_id = None
+
+                # TurnState 저장과 context 재구성이 모두 끝난 현재 batch의
+                # 제거 가능한 Tool은 다음 LLM 판단까지 한 번 유지합니다.
+                if workflow_context_refresh_succeeded:
+                    for tool_result in tool_results:
+                        tool_name = tool_result["tool_name"]
+                        tool_succeeded = tool_result["success"]
+                        if (
+                            tool_succeeded
+                            and tool_name
+                            in {
+                                "search_business_metadata",
+                                "search_saved_correct_tool_uses",
+                            }
+                        ):
+                            latest_removable_tool_batch_ids.add(
+                                tool_result["tool_call_id"]
+                            )
+
+                        if (
+                            not tool_succeeded
+                            and tool_name == "run_sql"
+                        ):
+                            latest_failed_run_sql_tool_call_id = (
+                                tool_result["tool_call_id"]
+                            )
+
                 # Add tool responses to conversation
                 # For APIs that need all tool results in one message, this helps
                 for tool_result in tool_results:
                     tool_result_content = tool_result["content"]
 
-                    # 검색 결과가 TurnState에 저장되고
-                    # 최신 builder context 재구성까지 성공한 경우에만
-                    # raw ToolResult를 짧은 완료 메시지로 교체
-                    if (
-                        workflow_context_refresh_succeeded
-                        and tool_result["success"]
-                    ):
+                    # Tool 결과가 TurnState에 저장되고 최신 builder context
+                    # 재구성까지 성공한 경우 raw ToolResult를 축약합니다.
+                    if workflow_context_refresh_succeeded:
                         if (
-                            tool_result["tool_name"]
+                            tool_result["success"]
+                            and tool_result["tool_name"]
                             == "search_business_metadata"
                         ):
                             tool_result_content = (
@@ -1473,13 +1603,25 @@ class Agent:
                             )
 
                         elif (
-                            tool_result["tool_name"]
+                            tool_result["success"]
+                            and tool_result["tool_name"]
                             == "search_saved_correct_tool_uses"
                         ):
                             tool_result_content = (
                                 "Few-shot search completed. "
                                 "Any retrieved examples are available "
                                 "in the current turn context."
+                            )
+
+                        elif (
+                            not tool_result["success"]
+                            and tool_result["tool_name"] == "run_sql"
+                        ):
+                            tool_result_content = (
+                                "SQL execution failed. Refer to the latest "
+                                "failed attempt in MAIN WORKFLOW CONTEXT "
+                                "for the SQL and error, then correct and "
+                                "regenerate the SQL."
                             )
 
                     tool_response_message = Message(
@@ -1503,10 +1645,12 @@ class Agent:
                     user,
                     system_prompt,
                     metadata=llm_request_metadata,
+                    excluded_tool_call_ids=completed_tool_call_ids,
                 )
             else:
                 # SQL 저장 단계에서 tool을 호출하지 않고 바로 답변한 경우에도
-                # TurnState가 저장 단계에 머물지 않도록 최종 답변 단계로 전환
+                # 해당 응답을 최종 답변으로 사용하지 않고 final_answer용
+                # context를 구성해 LLM을 다시 호출합니다.
                 if (
                     main_workflow_turn_state is not None
                     and main_workflow_turn_state.stage
@@ -1514,6 +1658,48 @@ class Agent:
                 ):
                     main_workflow_turn_state.stage = "final_answer"
                     main_workflow_turn_state.operation = "final_answer"
+
+                    main_workflow_metadata = (
+                        main_workflow_turn_state.to_metadata()
+                    )
+                    context.metadata["main_workflow"] = (
+                        main_workflow_metadata
+                    )
+                    llm_request_metadata["main_workflow"] = (
+                        main_workflow_metadata
+                    )
+
+                    if (
+                        self.llm_context_enhancer is not None
+                        and workflow_base_system_prompt is not None
+                    ):
+                        system_prompt = await (
+                            self.llm_context_enhancer
+                            .enhance_system_prompt_with_workflow(
+                                workflow_base_system_prompt,
+                                message,
+                                user,
+                                workflow_state=(
+                                    main_workflow_turn_state
+                                ),
+                                workflow_metadata=(
+                                    main_workflow_metadata
+                                ),
+                            )
+                        )
+
+                    request = await self._build_llm_request(
+                        conversation,
+                        self._tool_schemas_for_workflow_stage(
+                            tool_schemas,
+                            main_workflow_turn_state.stage,
+                        ),
+                        user,
+                        system_prompt,
+                        metadata=llm_request_metadata,
+                        excluded_tool_call_ids=completed_tool_call_ids,
+                    )
+                    continue
 
                 # Tool 호출이 없는 최종 LLM 답변을 TurnState에 저장
                 if (
@@ -1617,6 +1803,16 @@ You can:
             main_workflow_metadata = main_workflow_turn_state.to_metadata()
             context.metadata["main_workflow"] = main_workflow_metadata
             _log_turn_state("sql_processing_finalized", main_workflow_turn_state)
+
+            # 실제 Agent 응답이 종료된 최신 TurnState를 저장합니다.
+            # SQL 성공 여부와 관계없이 최종 사용자 메시지가 있으면 저장해
+            # 다음 Turn의 history에서 참조할 수 있도록 합니다.
+            turn_state_store = getattr(self, "turn_state_store", None)
+            if (
+                turn_state_store is not None
+                and main_workflow_turn_state.result.get("message")
+            ):
+                await turn_state_store.save_turn(main_workflow_metadata)
 
         # Save conversation if configured
         if self.config.auto_save_conversations:
@@ -1734,11 +1930,18 @@ You can:
         user: User,
         system_prompt: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        excluded_tool_call_ids: Optional[set[str]] = None,
     ) -> LlmRequest:
         """Build LLM request from conversation and tools."""
         filtered_messages = await self._apply_conversation_filters(
             conversation.messages
         )
+
+        if excluded_tool_call_ids:
+            filtered_messages = self._exclude_tool_call_pairs(
+                filtered_messages,
+                excluded_tool_call_ids,
+            )
 
         messages = []
         for msg in filtered_messages:
@@ -1787,6 +1990,40 @@ You can:
             system_prompt=system_prompt,
             metadata=metadata or {},
         )
+
+    @staticmethod
+    def _exclude_tool_call_pairs(
+        messages: List[Message],
+        excluded_tool_call_ids: set[str],
+    ) -> List[Message]:
+        """완료된 Tool 호출과 결과를 LLM 입력에서만 제외합니다."""
+
+        filtered_messages: List[Message] = []
+        for message in messages:
+            if (
+                message.role == "tool"
+                and message.tool_call_id in excluded_tool_call_ids
+            ):
+                continue
+
+            if message.tool_calls:
+                remaining_tool_calls = [
+                    tool_call
+                    for tool_call in message.tool_calls
+                    if tool_call.id not in excluded_tool_call_ids
+                ]
+                if len(remaining_tool_calls) != len(message.tool_calls):
+                    if not remaining_tool_calls and not message.content.strip():
+                        continue
+                    message = message.model_copy(
+                        update={
+                            "tool_calls": remaining_tool_calls or None,
+                        }
+                    )
+
+            filtered_messages.append(message)
+
+        return filtered_messages
 
     async def _apply_conversation_filters(
         self,

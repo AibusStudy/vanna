@@ -433,7 +433,13 @@ def build_data_discovering_subworkflow_executor(
 
 
 def _question_from_structured_output(structured_output: dict[str, Any]) -> str:
-    for key in ("original_question", "question", "user_question", "rewritten_question"):
+    for key in (
+        "metadata_discovery_question",
+        "original_question",
+        "question",
+        "user_question",
+        "rewritten_question",
+    ):
         value = structured_output.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

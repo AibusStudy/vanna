@@ -68,6 +68,9 @@ class SubworkflowState:
     visited_nodes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     retry_counts: dict[str, int] = field(default_factory=dict)
+    failed_node_id: str | None = None
+    failure_type: str | None = None
+    failure_detail: dict[str, Any] | None = None
 
     def to_metadata(self) -> dict[str, Any]:
         return {
@@ -76,6 +79,9 @@ class SubworkflowState:
             "visited_nodes": list(self.visited_nodes),
             "errors": list(self.errors),
             "retry_counts": dict(self.retry_counts),
+            "failed_node_id": self.failed_node_id,
+            "failure_type": self.failure_type,
+            "failure_detail": self.failure_detail,
         }
 
 

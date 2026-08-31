@@ -1,6 +1,7 @@
 """Generic SQL query execution tool with dependency injection."""
 
 import html
+import json
 from typing import Any, Dict, List, Optional, Type, cast
 import uuid
 from vanna.core.tool import Tool, ToolContext, ToolResult
@@ -100,6 +101,21 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         filename, csv_content, context, overwrite=True
                     )
 
+                    # SQL 실행 시 HanaRunner가 수집한 실제 결과 컬럼 스키마를
+                    # CSV와 같은 위치에 sidecar JSON 파일로 저장합니다.
+                    result_schema = df.attrs.get("result_schema", [])
+                    schema_filename = filename.removesuffix(".csv") + ".schema.json"
+                    await self.file_system.write_file(
+                        schema_filename,
+                        json.dumps(
+                            {"columns": result_schema},
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        context,
+                        overwrite=True,
+                    )
+
                     # Create result text for LLM with truncated results
                     results_preview = csv_content
                     if len(results_preview) > 1000:
@@ -132,6 +148,7 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         "query_type": query_type,
                         "results": results_data,
                         "output_file": filename,
+                        "schema_file": schema_filename,
                     }
             else:
                 # For non-SELECT queries (INSERT, UPDATE, DELETE, etc.)

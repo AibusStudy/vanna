@@ -31,3 +31,4 @@ frontends/**/.mypy_cache/
 .docs/
 docs/
 /.venv
+.vscode

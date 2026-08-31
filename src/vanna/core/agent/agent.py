@@ -748,6 +748,7 @@ class Agent:
             if main_workflow_turn_state.operation not in {
                 "clarification_required",
                 "continue_with_warning",
+                "continuous_analysis_dataset_required",
             }:
                 main_workflow_turn_state.operation = (
                     "sql_generation"

@@ -208,6 +208,11 @@ class MainWorkflowExecutor:
                         "추가 도구를 호출하거나 SQL을 생성하지 말고 이 내용을 "
                         "사용자에게 안내하세요."
                     )
+            if (
+                state.csv_reference.mentioned
+                and state.csv_reference.filename is not None
+            ):
+                state.operation = "continuous_analysis_dataset_required"
         _log_turn_state("initialized", state)
 
         if state.operation == "clarification_required":
@@ -229,7 +234,11 @@ class MainWorkflowExecutor:
                 _log_turn_state("data_discovery_saved", state)
 
         state.stage = "context_enrichment"
-        if state.operation not in {"clarification_required", "continue_with_warning"}:
+        if state.operation not in {
+            "clarification_required",
+            "continue_with_warning",
+            "continuous_analysis_dataset_required",
+        }:
             state.operation = "context_enrichment_ready"
         if is_non_sql_intent:
             _log_turn_state_summary("context_enrichment_ready", state)

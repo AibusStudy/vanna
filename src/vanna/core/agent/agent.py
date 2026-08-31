@@ -745,9 +745,13 @@ class Agent:
             main_workflow_turn_state.stage = (
                 "sql_generation"
             )
-            main_workflow_turn_state.operation = (
-                "sql_generation"
-            )
+            if main_workflow_turn_state.operation not in {
+                "clarification_required",
+                "continue_with_warning",
+            }:
+                main_workflow_turn_state.operation = (
+                    "sql_generation"
+                )
 
             main_workflow_metadata = (
                 main_workflow_turn_state.to_metadata()

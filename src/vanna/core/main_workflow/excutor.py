@@ -390,11 +390,7 @@ class MainWorkflowExecutor:
         metadata_recovery = self._is_json_validation_recovery(state)
         if metadata_recovery:
             state.metadata["searches"] = []
-            structured_output_override = {
-                "intent": "sql",
-                "question": state.original_question,
-                "original_question": state.original_question,
-            }
+            structured_output_override = self._json_validation_recovery_structured_output(state)
 
         subflow_state = state.subflow("data_discovery")
         state.stage = "data_discovery"
@@ -555,6 +551,49 @@ class MainWorkflowExecutor:
             "question": state.original_question,
             "original_question": state.original_question,
         }
+
+    def _json_validation_recovery_structured_output(
+        self,
+        state: MainWorkflowTurnState,
+    ) -> dict[str, Any]:
+        structured_output = {
+            key: value
+            for key, value in state.structured_question.items()
+            if key not in {"search_plan", "search_queries"}
+        }
+        question_subflow = state.subflow("question_understanding")
+        error_message = self._json_validation_recovery_error_message(question_subflow)
+        structured_output.update(
+            {
+                "intent": "sql",
+                "question": state.original_question,
+                "original_question": state.original_question,
+                "metadata_discovery_recovery": {
+                    "source_subflow": "question_understanding",
+                    "source_node_id": question_subflow.failed_node_id,
+                    "failure_type": question_subflow.failure_type,
+                    "error_message": error_message,
+                },
+            }
+        )
+        if error_message:
+            structured_output["metadata_discovery_question"] = (
+                f"{state.original_question}\n\n"
+                f"JSON validation error: {error_message}"
+            )
+        return structured_output
+
+    @staticmethod
+    def _json_validation_recovery_error_message(subflow_state: Any) -> str | None:
+        failure_detail = getattr(subflow_state, "failure_detail", None)
+        if isinstance(failure_detail, dict):
+            error = failure_detail.get("error")
+            if isinstance(error, str) and error.strip():
+                return error.strip()
+        for error in getattr(subflow_state, "errors", []) or []:
+            if isinstance(error, str) and error.strip():
+                return error.strip()
+        return None
 
     def _convert_metadata_execution_error_to_warning(
         self,

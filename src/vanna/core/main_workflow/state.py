@@ -305,6 +305,31 @@ class MainWorkflowTurnState:
         self.result["status"] = attempt.status
         return attempt
 
+    def record_active_dataset(
+        self,
+        *,
+        dataset_id: str,
+        source_csv: str,
+        schema_file: str,
+        schema: dict[str, Any],
+    ) -> ActiveDatasetState:
+        """CsvToJsonTool이 준비한 Dataset의 참조 정보만 기록합니다."""
+        active_dataset = ActiveDatasetState(
+            dataset_id=dataset_id,
+            source_csv=source_csv,
+            schema_file=schema_file,
+            schema=dict(schema),
+        )
+        self.active_dataset = active_dataset
+
+        # 사용자가 "이 CSV"라고만 말해 파일명이 미해결이었던 경우,
+        # 실제로 준비된 파일명으로 판별 상태도 함께 확정합니다.
+        if self.csv_reference.filename is None:
+            self.csv_reference.filename = source_csv
+            self.csv_reference.resolution = "tool_resolved_filename"
+
+        return active_dataset
+
     def to_metadata(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,

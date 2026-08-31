@@ -1232,6 +1232,40 @@ class Agent:
                             main_workflow_turn_state.operation = (
                                 "fewshot_search"
                             ) 
+
+                    ## 연속 분석용 Dataset 참조 정보 저장
+                    if (
+                        main_workflow_turn_state is not None
+                        and result.success
+                        and tool_call.name == "csv_to_json"
+                    ):
+                        tool_metadata = result.metadata or {}
+                        dataset_id = tool_metadata.get("dataset_id")
+                        source_csv = tool_metadata.get("source_csv")
+                        schema_file = tool_metadata.get("schema_file")
+                        schema = tool_metadata.get("schema")
+
+                        if (
+                            isinstance(dataset_id, str)
+                            and isinstance(source_csv, str)
+                            and isinstance(schema_file, str)
+                            and isinstance(schema, dict)
+                        ):
+                            main_workflow_turn_state.record_active_dataset(
+                                dataset_id=dataset_id,
+                                source_csv=source_csv,
+                                schema_file=schema_file,
+                                schema=schema,
+                            )
+                            main_workflow_turn_state.operation = (
+                                "continuous_analysis_dataset_ready"
+                            )
+                            state_changed = True
+                            workflow_context_refresh_required = True
+                            _log_turn_state(
+                                "active_dataset_saved",
+                                main_workflow_turn_state,
+                            )
                     
                     if state_changed:
                         main_workflow_metadata = (

@@ -156,6 +156,9 @@ class QuestionUnderstandSubWorkflowExecutor:
             structured_output=state.structured_question,
             errors=errors,
             retry_counts=state.retry_counts,
+            failed_node_id=state.failed_node_id,
+            failure_type=state.failure_type or self._infer_failure_type(errors),
+            failure_detail=state.failure_detail,
         )
 
     def _extract_intent(self, state: QuestUnderstand_State) -> Optional[str]:

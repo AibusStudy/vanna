@@ -225,7 +225,10 @@ class MainWorkflowExecutor:
             _log_turn_state("fb1_marked", state)
             result_metadata = await self._run_question_understanding_once(input, state)
 
-        if result_metadata.get("status") == "failed":
+        if (
+            result_metadata.get("status") == "failed"
+            and not self._is_json_validation_recovery_result(result_metadata)
+        ):
             self._assign_clarification_result(
                 state,
                 failed_subflow="question_understanding",
@@ -273,10 +276,19 @@ class MainWorkflowExecutor:
             subflow_state.status = result_metadata.get("status", "success")
             subflow_state.errors = list(result_metadata.get("errors", []))
             subflow_state.retry_counts = dict(result_metadata.get("retry_counts", {}))
+            subflow_state.failed_node_id = result_metadata.get("failed_node_id")
+            subflow_state.failure_type = self._failure_type(result_metadata)
+            subflow_state.failure_detail = result_metadata.get("failure_detail")
             return result_metadata
         except Exception as exc:
             subflow_state.status = "failed"
             subflow_state.errors.append(str(exc))
+            subflow_state.failed_node_id = "question_understanding_subworkflow"
+            subflow_state.failure_type = "question_structuring_failed"
+            subflow_state.failure_detail = {
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            }
             state.structured_question = {}
             result_metadata = {
                 "status": "failed",
@@ -411,10 +423,19 @@ class MainWorkflowExecutor:
                 subflow_state.status = "success"
             subflow_state.errors = list(result_metadata.get("errors", []))
             subflow_state.retry_counts = dict(result_metadata.get("retry_counts", {}))
+            subflow_state.failed_node_id = result_metadata.get("failed_node_id")
+            subflow_state.failure_type = self._failure_type(result_metadata)
+            subflow_state.failure_detail = result_metadata.get("failure_detail")
             return result_metadata
         except Exception as exc:
             subflow_state.status = "failed"
             subflow_state.errors.append(str(exc))
+            subflow_state.failed_node_id = "data_discovery_subworkflow"
+            subflow_state.failure_type = "metadata_execution_error"
+            subflow_state.failure_detail = {
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            }
             state.metadata = {"searches": [], "candidates": [], "selected": []}
             state.fewshot = []
             result_metadata = {
@@ -457,11 +478,22 @@ class MainWorkflowExecutor:
             in error_text
         )
 
+    def _is_json_validation_recovery_result(self, result_metadata: dict[str, Any]) -> bool:
+        return (
+            self._failure_type(result_metadata) == "json_validation_retry_exceeded"
+            or self._is_json_validation_retry_exceeded(
+                list(result_metadata.get("errors", []))
+            )
+        )
+
     def _is_json_validation_recovery(self, state: MainWorkflowTurnState) -> bool:
         question_subflow = state.subflow("question_understanding")
         return (
             question_subflow.status == "failed"
-            and self._is_json_validation_retry_exceeded(question_subflow.errors)
+            and (
+                question_subflow.failure_type == "json_validation_retry_exceeded"
+                or self._is_json_validation_retry_exceeded(question_subflow.errors)
+            )
             and bool(state.original_question.strip())
         )
 
@@ -492,7 +524,10 @@ class MainWorkflowExecutor:
 
         return (
             question_subflow.status == "failed"
-            and self._is_json_validation_retry_exceeded(question_subflow.errors)
+            and (
+                question_subflow.failure_type == "json_validation_retry_exceeded"
+                or self._is_json_validation_retry_exceeded(question_subflow.errors)
+            )
             and bool(state.original_question.strip())
         )
 

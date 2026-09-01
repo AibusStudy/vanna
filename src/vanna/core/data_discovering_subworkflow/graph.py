@@ -349,7 +349,7 @@ class FewShotSearchNode:
                 question=question,
                 context=None,
                 limit=self.limit,
-                similarity_threshold=0.7,
+                similarity_threshold=0.0,
             )
         except Exception as exc:
             return DataDiscover_NodeResult(

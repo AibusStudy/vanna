@@ -646,7 +646,10 @@ class Agent:
                 turn_history = (
                     turn_history if isinstance(turn_history, dict) else {}
                 )
-                if not turn_history and turn_state_store is not None:
+                # DB를 Turn history의 기준 저장소로 사용합니다.
+                # request metadata에 이전 요청의 빈 history 구조가 남아 있어도
+                # 현재 conversation/turn_number 기준으로 항상 다시 조회합니다.
+                if turn_state_store is not None:
                     turn_history = await turn_state_store.load_history(
                         conversation_id=conversation_id,
                         current_turn_number=current_turn_number,

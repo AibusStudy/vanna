@@ -44,7 +44,7 @@ class SearchSavedCorrectToolUsesParams(BaseModel):
         default=10, description="Maximum number of results to return"
     )
     similarity_threshold: Optional[float] = Field(
-        default=0.0, description="Minimum similarity score for results (0.0-1.0)"
+        default=0.7, description="Minimum similarity score for results (0.0-1.0)"
     )
     tool_name_filter: Optional[str] = Field(
         default=None, description="Filter results to specific tool name"
@@ -140,11 +140,7 @@ class SearchSavedCorrectToolUsesTool(Tool[SearchSavedCorrectToolUsesParams]):
                 question=args.question,
                 context=context,
                 limit=args.limit or 10,
-                similarity_threshold=(
-                    args.similarity_threshold
-                    if args.similarity_threshold is not None
-                    else 0.0
-                ),
+                similarity_threshold=args.similarity_threshold or 0.7,
                 tool_name_filter=args.tool_name_filter,
             )
 

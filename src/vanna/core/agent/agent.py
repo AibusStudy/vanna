@@ -1901,11 +1901,13 @@ You can:
             "sql_generation": {
                 "search_business_metadata",
                 "search_saved_correct_tool_uses",
+                "csv_to_json",
                 "run_sql",
             },
             "sql_regeneration": {
                 "search_business_metadata",
                 "search_saved_correct_tool_uses",
+                "csv_to_json",
                 "run_sql",
             },
             "successful_query_save": {

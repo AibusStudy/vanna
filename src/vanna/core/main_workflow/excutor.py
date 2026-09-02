@@ -22,7 +22,7 @@ try:
 except ImportError:
     DataDiscover_Input = None
 
-from .state import CsvReferenceState, MainWorkflowInput, MainWorkflowTurnState
+from .state import CsvRequestState, MainWorkflowInput, MainWorkflowTurnState
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class MainWorkflowExecutor:
         question_understanding_executor: Optional[QuestionUnderstandSubWorkflowExecutor] = None,
         data_discovery_executor: Optional[DataDiscoverSubWorkflowExecutor] = None,
         router=None,
-        csv_reference_detector: Callable[[str], dict[str, Any]] | None = None,
+        csv_request_detector: Callable[[str], dict[str, Any]] | None = None,
 
         # steps, limit 적용x
         # max_workflow_steps, workflow_retry_limit는 현재 MainWorkflowExecutor에서 적용하지 않는다.
@@ -141,7 +141,7 @@ class MainWorkflowExecutor:
         self.question_understanding_executor = question_understanding_executor
         self.data_discovery_executor = data_discovery_executor
         self.router = router
-        self.csv_reference_detector = csv_reference_detector
+        self.csv_request_detector = csv_request_detector
 
     #     self._apply_subworkflow_limits(
     #         self.question_understanding_executor,
@@ -180,23 +180,23 @@ class MainWorkflowExecutor:
                 else {}
             ),
         )
-        if self.csv_reference_detector is not None:
-            detected = self.csv_reference_detector(input.original_message)
-            state.csv_reference = CsvReferenceState(
-                mentioned=bool(detected.get("mentioned", False)),
+        if self.csv_request_detector is not None:
+            detected = self.csv_request_detector(input.original_message)
+            state.csv_request = CsvRequestState(
+                intent=detected.get("intent", "none"),
                 filename=detected.get("filename"),
                 resolution=detected.get("resolution"),
             )
             if (
-                state.csv_reference.mentioned
-                and state.csv_reference.filename is None
+                state.csv_request.intent == "use_as_input"
+                and state.csv_request.filename is None
             ):
                 history_csv_name = self._latest_history_csv_name(
                     state.history
                 )
                 if history_csv_name is not None:
-                    state.csv_reference.filename = history_csv_name
-                    state.csv_reference.resolution = (
+                    state.csv_request.filename = history_csv_name
+                    state.csv_request.resolution = (
                         "latest_successful_turn"
                     )
                 else:
@@ -209,14 +209,14 @@ class MainWorkflowExecutor:
                         "사용자에게 안내하세요."
                     )
             if (
-                state.csv_reference.mentioned
-                and state.csv_reference.filename is not None
+                state.csv_request.intent == "use_as_input"
+                and state.csv_request.filename is not None
             ):
                 state.operation = "continuous_analysis_dataset_required"
         _log_turn_state("initialized", state)
 
         if state.operation == "clarification_required":
-            _log_turn_state("csv_reference_unresolved", state)
+            _log_turn_state("csv_request_unresolved", state)
             return state
 
         await self._run_question_understanding_with_fb1(input, state)

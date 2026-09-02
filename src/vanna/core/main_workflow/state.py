@@ -18,6 +18,12 @@ MainWorkflowStage = Literal[
     "final",
 ]
 SqlAttemptStatus = Literal["success", "failed"]
+CsvRequestIntent = Literal[
+    "none",
+    "use_as_input",
+    "save_as_output",
+    "ambiguous",
+]
 
 
 @dataclass
@@ -102,16 +108,16 @@ class SqlAttemptState:
 
 
 @dataclass
-class CsvReferenceState:
-    """현재 사용자 질문에서 CSV 사용 의도를 판별한 결과입니다."""
+class CsvRequestState:
+    """현재 사용자 질문에서 판별한 CSV 요청의 종류와 파일 정보입니다."""
 
-    mentioned: bool = False
+    intent: CsvRequestIntent = "none"
     filename: str | None = None
     resolution: str | None = None
 
     def to_metadata(self) -> dict[str, Any]:
         return {
-            "mentioned": self.mentioned,
+            "intent": self.intent,
             "filename": self.filename,
             "resolution": self.resolution,
         }
@@ -155,7 +161,7 @@ class MainWorkflowTurnState:
     conversation_id: str | None = None
     turn_number: int = 1
     history: dict[str, Any] = field(default_factory=dict)
-    csv_reference: CsvReferenceState = field(default_factory=CsvReferenceState)
+    csv_request: CsvRequestState = field(default_factory=CsvRequestState)
     active_dataset: ActiveDatasetState | None = None
 
     stage: MainWorkflowStage = "question_understanding"
@@ -330,9 +336,9 @@ class MainWorkflowTurnState:
 
         # 사용자가 "이 CSV"라고만 말해 파일명이 미해결이었던 경우,
         # 실제로 준비된 파일명으로 판별 상태도 함께 확정합니다.
-        if self.csv_reference.filename is None:
-            self.csv_reference.filename = source_csv
-            self.csv_reference.resolution = "tool_resolved_filename"
+        if self.csv_request.filename is None:
+            self.csv_request.filename = source_csv
+            self.csv_request.resolution = "tool_resolved_filename"
 
         return active_dataset
 
@@ -342,7 +348,7 @@ class MainWorkflowTurnState:
             "conversation_id": self.conversation_id,
             "turn_number": self.turn_number,
             "history": dict(self.history),
-            "csv_reference": self.csv_reference.to_metadata(),
+            "csv_request": self.csv_request.to_metadata(),
             "active_dataset": (
                 self.active_dataset.to_metadata()
                 if self.active_dataset is not None

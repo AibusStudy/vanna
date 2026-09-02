@@ -57,6 +57,50 @@ logger = logging.getLogger(__name__)
 
 logger.info("Loaded vanna.core.agent.agent module")
 
+
+def _workflow_context_has_tool_result(
+    workflow_metadata: Optional[Dict[str, Any]],
+    tool_name: str,
+) -> bool:
+    """Return whether refreshed workflow context contains this tool's payload."""
+
+    if not isinstance(workflow_metadata, dict):
+        return False
+    if tool_name == "search_business_metadata":
+        metadata = workflow_metadata.get("metadata")
+        if not isinstance(metadata, dict):
+            return False
+        candidates = metadata.get("candidates")
+        return isinstance(candidates, list) and any(
+            isinstance(candidate, dict) and bool(candidate)
+            for candidate in candidates
+        )
+    if tool_name == "search_saved_correct_tool_uses":
+        fewshot = workflow_metadata.get("fewshot")
+        return isinstance(fewshot, list) and any(
+            isinstance(example, dict) and bool(example)
+            for example in fewshot
+        )
+    return False
+
+
+def _can_compact_workflow_tool_result(
+    *,
+    workflow_context_refresh_succeeded: bool,
+    workflow_metadata: Optional[Dict[str, Any]],
+    tool_name: str,
+    tool_succeeded: bool,
+) -> bool:
+    if not workflow_context_refresh_succeeded:
+        return False
+    if not tool_succeeded and tool_name == "run_sql":
+        return True
+    return tool_succeeded and _workflow_context_has_tool_result(
+        workflow_metadata,
+        tool_name,
+    )
+
+
 if TYPE_CHECKING:
     pass
 
@@ -526,6 +570,15 @@ class Agent:
         # Not triggered, add user message to conversation now
         user_message = Message(role="user", content=message)
         conversation.add_message(user_message)
+
+        # TurnStateStore의 follow-up 처리는 현재 user 메시지를 PostgreSQL에서
+        # 조회한다. Main Workflow가 활성화된 경우 질문 이해를 시작하기 전에
+        # 현재 conversation snapshot을 저장하여 해당 메시지의 존재를 보장한다.
+        if (
+            self.main_workflow_executor is not None
+            and getattr(self, "turn_state_store", None) is not None
+        ):
+            await self.conversation_store.update_conversation(conversation)
 
         # Add initial task
         context_task = Task(
@@ -1573,6 +1626,10 @@ class Agent:
                                 "search_business_metadata",
                                 "search_saved_correct_tool_uses",
                             }
+                            and _workflow_context_has_tool_result(
+                                main_workflow_metadata,
+                                tool_name,
+                            )
                         ):
                             latest_removable_tool_batch_ids.add(
                                 tool_result["tool_call_id"]
@@ -1593,7 +1650,14 @@ class Agent:
 
                     # Tool 결과가 TurnState에 저장되고 최신 builder context
                     # 재구성까지 성공한 경우 raw ToolResult를 축약합니다.
-                    if workflow_context_refresh_succeeded:
+                    if _can_compact_workflow_tool_result(
+                        workflow_context_refresh_succeeded=(
+                            workflow_context_refresh_succeeded
+                        ),
+                        workflow_metadata=main_workflow_metadata,
+                        tool_name=tool_result["tool_name"],
+                        tool_succeeded=tool_result["success"],
+                    ):
                         if (
                             tool_result["success"]
                             and tool_result["tool_name"]

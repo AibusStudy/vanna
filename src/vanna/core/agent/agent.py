@@ -1615,10 +1615,24 @@ class Agent:
 
                 # TurnState 저장과 context 재구성이 모두 끝난 현재 batch의
                 # 제거 가능한 Tool은 다음 LLM 판단까지 한 번 유지합니다.
+                # 성공 SQL 저장은 내부 workflow 작업입니다. 저장 완료 Tool
+                # 메시지가 final_answer에 섞이지 않도록 context 재구성 성공
+                # 여부와 관계없이 현재 호출과 결과 쌍을 즉시 제외합니다.
+                for tool_result in tool_results:
+                    if (
+                        tool_result["success"]
+                        and tool_result["tool_name"]
+                        == "save_question_tool_args"
+                    ):
+                        completed_tool_call_ids.add(
+                            tool_result["tool_call_id"]
+                        )
+
                 if workflow_context_refresh_succeeded:
                     for tool_result in tool_results:
                         tool_name = tool_result["tool_name"]
                         tool_succeeded = tool_result["success"]
+
                         if (
                             tool_succeeded
                             and tool_name

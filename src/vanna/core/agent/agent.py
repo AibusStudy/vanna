@@ -1768,14 +1768,24 @@ class Agent:
                     )
                     continue
 
-                # Tool 호출이 없는 최종 LLM 답변을 TurnState에 저장
+                # final_answer 응답은 최종 메시지로 확정합니다.
+                # 그 이전 단계의 사용자 안내는 턴이 중간 종료될 때를 대비해
+                # pending_message에만 보관합니다.
                 if (
                     main_workflow_turn_state is not None
                     and response.content
                 ):
-                    main_workflow_turn_state.result["message"] = (
-                        response.content
-                    )
+                    if (
+                        main_workflow_turn_state.stage
+                        == "final_answer"
+                    ):
+                        main_workflow_turn_state.result["message"] = (
+                            response.content
+                        )
+                    else:
+                        main_workflow_turn_state.pending_message = (
+                            response.content
+                        )
 
                 # stage와 최종 답변이 반영된 최신 snapshot 동기화
                 if main_workflow_turn_state is not None:
@@ -1861,6 +1871,15 @@ You can:
 
         # tool-calling loop(sql_processing subworkflow)를 종료/기록
         if main_workflow_turn_state is not None:
+            # 정상 final_answer가 없을 때만 중간 종료 안내를 최종 메시지로 사용합니다.
+            if (
+                not main_workflow_turn_state.result.get("message")
+                and main_workflow_turn_state.pending_message
+            ):
+                main_workflow_turn_state.result["message"] = (
+                    main_workflow_turn_state.pending_message
+                )
+
             tool_limit_reached = tool_iterations >= self.config.max_tool_iterations
             sql_processing_executor.finalize(
                 main_workflow_turn_state,

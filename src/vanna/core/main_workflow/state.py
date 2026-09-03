@@ -205,6 +205,10 @@ class MainWorkflowTurnState:
     current_attempt_number: int = 0
     attempts: list[SqlAttemptState] = field(default_factory=list)
 
+    # final_answer까지 도달하지 못했을 때 사용할 사용자 안내 후보입니다.
+    # Context에는 주입하지 않고 턴 종료 시 result.message가 비어 있을 때만 사용합니다.
+    pending_message: str | None = None
+
     result: dict[str, Any] = field(
         default_factory=lambda: {
             "message": None,
@@ -374,6 +378,7 @@ class MainWorkflowTurnState:
             "context_enrichment": dict(self.context_enrichment),
             "current_attempt_number": self.current_attempt_number,
             "attempts": [attempt.to_metadata() for attempt in self.attempts],
+            "pending_message": self.pending_message,
             "result": dict(self.result),
         }
     ## 메타데이터 검색 결과 병합

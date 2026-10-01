@@ -2000,15 +2000,18 @@ You can:
                 "search_saved_correct_tool_uses",
                 "csv_to_json",
                 "run_sql",
+                "visualize_data",
             },
             "sql_regeneration": {
                 "search_business_metadata",
                 "search_saved_correct_tool_uses",
                 "csv_to_json",
                 "run_sql",
+                "visualize_data",
             },
             "successful_query_save": {
                 "save_question_tool_args",
+                "visualize_data",
             },
             "final_answer": set(),
         }

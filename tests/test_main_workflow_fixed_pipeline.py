@@ -1,0 +1,98 @@
+"""Tests for the fixed SQL execution and visualization pipeline."""
+
+from types import SimpleNamespace
+
+import pytest
+
+from vanna.core.llm import LlmResponse
+from vanna.core.main_workflow.excutor import MainWorkflowExecutor
+from vanna.core.main_workflow.state import MainWorkflowInput
+from vanna.core.tool import ToolCall, ToolResult, ToolSchema
+from vanna.core.user import User
+
+
+class SqlLlm:
+    def __init__(self, sql: str) -> None:
+        self.sql = sql
+        self.calls = 0
+
+    async def send_request(self, request):
+        self.calls += 1
+        return LlmResponse(
+            tool_calls=[
+                ToolCall(
+                    id=f"sql_{self.calls}",
+                    name="run_sql",
+                    arguments={"sql": self.sql},
+                )
+            ]
+        )
+
+
+class RecordingRegistry:
+    def __init__(self) -> None:
+        self.names = []
+
+    async def execute(self, call, context):
+        self.names.append(call.name)
+        if call.name == "run_sql":
+            return ToolResult(
+                success=True,
+                result_for_llm="ok",
+                metadata={
+                    "output_file": "query.csv",
+                    "row_count": 2,
+                    "columns": ["region", "sales"],
+                },
+            )
+        return ToolResult(success=True, result_for_llm="visualized")
+
+
+def workflow_input():
+    user = User(id="user", group_memberships=["user"])
+    return MainWorkflowInput(
+        user_id="user",
+        conversation_id="conversation",
+        request_id="request",
+        original_message="Show sales by region",
+        system_prompt="You generate SQL.",
+        tool_schemas=[
+            ToolSchema(name="run_sql", description="Run SQL", parameters={}),
+            ToolSchema(
+                name="visualize_data",
+                description="Visualize CSV",
+                parameters={},
+            ),
+        ],
+        tool_context=SimpleNamespace(user=user),
+    )
+
+
+@pytest.mark.asyncio
+async def test_fixed_pipeline_executes_sql_then_visualization() -> None:
+    registry = RecordingRegistry()
+    executor = MainWorkflowExecutor(
+        llm_service=SqlLlm("SELECT region, SUM(sales) FROM orders GROUP BY region"),
+        tool_registry=registry,
+    )
+
+    state = await executor.run(workflow_input())
+
+    assert registry.names == ["run_sql", "visualize_data"]
+    assert state.stage == "final"
+    assert state.result["status"] == "success"
+    assert state.subflow("visualization").status == "success"
+
+
+@pytest.mark.asyncio
+async def test_fixed_pipeline_rejects_non_select_sql() -> None:
+    registry = RecordingRegistry()
+    llm = SqlLlm("DELETE FROM orders")
+    executor = MainWorkflowExecutor(llm_service=llm, tool_registry=registry)
+
+    state = await executor.run(workflow_input())
+
+    assert registry.names == []
+    assert llm.calls == 2
+    assert state.result["status"] == "failed"
+    assert "read-only SELECT" in state.result["message"]

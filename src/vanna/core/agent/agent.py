@@ -674,6 +674,17 @@ class Agent:
 
         if self.main_workflow_executor:
             try:
+                configure_runtime = getattr(
+                    self.main_workflow_executor,
+                    "configure_runtime",
+                    None,
+                )
+                if callable(configure_runtime):
+                    configure_runtime(
+                        llm_service=self.llm_service,
+                        tool_registry=self.tool_registry,
+                        llm_context_enhancer=self.llm_context_enhancer,
+                    )
                 turn_state_store = getattr(self, "turn_state_store", None)
                 current_turn_number = request_context.metadata.get(
                     "turn_number"
@@ -762,6 +773,27 @@ class Agent:
                     "errors": [f"Main workflow failed: {str(e)}"],
                 }
                 logger.exception("[agent.main_workflow] failed")
+                error_message = f"Main workflow failed: {str(e)}"
+                conversation.add_message(
+                    Message(role="assistant", content=error_message)
+                )
+                yield UiComponent(
+                    rich_component=StatusCardComponent(
+                        title="Workflow failed",
+                        status="error",
+                        description=error_message,
+                    ),
+                    simple_component=SimpleTextComponent(text=error_message),
+                )
+                yield UiComponent(  # type: ignore
+                    rich_component=ChatInputUpdateComponent(
+                        placeholder="Try again...",
+                        disabled=False,
+                    )
+                )
+                if self.config.auto_save_conversations:
+                    await self.conversation_store.update_conversation(conversation)
+                return
 
             if main_workflow_metadata is not None:
                 context.metadata["main_workflow"] = main_workflow_metadata
@@ -793,6 +825,51 @@ class Agent:
                 # producing the final assistant response.
                 for ui_component in getattr(main_workflow_turn_state, "ui_components", []):
                     yield ui_component
+
+                # MainWorkflowExecutor owns the complete fixed SQL pipeline.
+                # A final state means SQL generation, execution, and optional
+                # visualization are complete, so the legacy agentic tool loop
+                # must not run.
+                if main_workflow_turn_state.stage == "final":
+                    final_message = main_workflow_turn_state.result.get("message")
+                    if isinstance(final_message, str) and final_message:
+                        conversation.add_message(
+                            Message(role="assistant", content=final_message)
+                        )
+                        yield UiComponent(
+                            rich_component=RichTextComponent(
+                                content=final_message,
+                                markdown=True,
+                            ),
+                            simple_component=SimpleTextComponent(text=final_message),
+                        )
+
+                    final_metadata = main_workflow_turn_state.to_metadata()
+                    context.metadata["main_workflow"] = final_metadata
+                    turn_state_store = getattr(self, "turn_state_store", None)
+                    if turn_state_store is not None and final_message:
+                        await turn_state_store.save_turn(final_metadata)
+
+                    if self.config.auto_save_conversations:
+                        await self.conversation_store.update_conversation(conversation)
+
+                    for hook in self.lifecycle_hooks:
+                        await hook.after_message(conversation)
+
+                    yield UiComponent(  # type: ignore
+                        rich_component=StatusBarUpdateComponent(
+                            status="idle",
+                            message="Workflow complete",
+                            detail="Ready for next message",
+                        )
+                    )
+                    yield UiComponent(  # type: ignore
+                        rich_component=ChatInputUpdateComponent(
+                            placeholder="Ask a question...",
+                            disabled=False,
+                        )
+                    )
+                    return
         # Agent no longer runs it as a separate branch.
 
         # Enhancer가 SQL 생성용 context를 구성할 수 있도록 다음 실행 단계를 SQL 생성으로 전환

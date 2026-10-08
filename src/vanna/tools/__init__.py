@@ -16,6 +16,7 @@ from .python import (
     create_python_tools,
 )
 from vanna.integrations.plotly import PlotlyChartGenerator
+from vanna.integrations.matplotlib import MatplotlibChartGenerator
 from .run_sql import RunSqlTool
 from .visualize_data import VisualizeDataTool
 
@@ -37,5 +38,6 @@ __all__ = [
     "RunSqlTool",
     # Visualization
     "PlotlyChartGenerator",
+    "MatplotlibChartGenerator",
     "VisualizeDataTool",
 ]

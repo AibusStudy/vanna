@@ -14,6 +14,7 @@ MainWorkflowStage = Literal[
     "sql_generation",
     "sql_regeneration",
     "successful_query_save",
+    "visualization",
     "final_answer",
     "final",
 ]
@@ -174,6 +175,7 @@ class MainWorkflowTurnState:
             "question_understanding": SubworkflowState(),
             "data_discovery": SubworkflowState(),
             "sql_processing": SubworkflowState(),
+            "visualization": SubworkflowState(),
         }
     )
 

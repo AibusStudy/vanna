@@ -1,6 +1,7 @@
 """Tool for visualizing DataFrame data from CSV files."""
 
 from typing import Optional, Type
+import html
 import logging
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -8,14 +9,15 @@ from pydantic import BaseModel, Field
 from vanna.core.tool import Tool, ToolContext, ToolResult
 from vanna.components import (
     UiComponent,
-    ChartComponent,
+    ArtifactComponent,
     NotificationComponent,
     ComponentType,
+    SimpleImageComponent,
     SimpleTextComponent,
 )
 
 from .file_system import FileSystem, LocalFileSystem
-from vanna.integrations.plotly import PlotlyChartGenerator
+from vanna.integrations.matplotlib import MatplotlibChartGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +37,16 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
     def __init__(
         self,
         file_system: Optional[FileSystem] = None,
-        plotly_generator: Optional[PlotlyChartGenerator] = None,
+        chart_generator: Optional[MatplotlibChartGenerator] = None,
     ):
-        """Initialize the tool with FileSystem and PlotlyChartGenerator.
+        """Initialize the tool with a filesystem and Matplotlib generator.
 
         Args:
             file_system: FileSystem implementation for reading CSV files (defaults to LocalFileSystem)
-            plotly_generator: PlotlyChartGenerator for creating Plotly charts (defaults to PlotlyChartGenerator())
+            chart_generator: Matplotlib generator used to render PNG images
         """
         self.file_system = file_system or LocalFileSystem()
-        self.plotly_generator = plotly_generator or PlotlyChartGenerator()
+        self.chart_generator = chart_generator or MatplotlibChartGenerator()
 
     @property
     def name(self) -> str:
@@ -78,10 +80,11 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
 
             # Generate title
             title = args.title or f"Visualization of {args.filename}"
+            escaped_title = html.escape(title, quote=True)
 
-            # Generate chart using PlotlyChartGenerator
+            # Generate a static PNG using Matplotlib.
             logger.info("Generating chart...")
-            chart_dict = self.plotly_generator.generate_chart(df, title)
+            chart_dict = self.chart_generator.generate_chart(df, title)
             logger.info(
                 f"Chart generated, type: {type(chart_dict)}, keys: {list(chart_dict.keys()) if isinstance(chart_dict, dict) else 'N/A'}"
             )
@@ -91,16 +94,20 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             col_count = len(df.columns)
             result = f"Created visualization from '{args.filename}' ({row_count} rows, {col_count} columns)."
 
-            # Create ChartComponent
-            logger.info("Creating ChartComponent...")
-            chart_component = ChartComponent(
-                chart_type="plotly",
-                data=chart_dict,
+            image_url = chart_dict["data_url"]
+            chart_component = ArtifactComponent(
+                content=(
+                    '<div style="display:flex;justify-content:center">'
+                    f'<img src="{image_url}" alt="{escaped_title}" '
+                    'style="max-width:100%;height:auto" />'
+                    "</div>"
+                ),
+                artifact_type="visualization",
                 title=title,
-                config={
-                    "data_shape": {"rows": row_count, "columns": col_count},
-                    "source_file": args.filename,
-                },
+                description=f"{row_count} rows, {col_count} columns",
+                editable=False,
+                fullscreen_capable=True,
+                external_renderable=False,
             )
             logger.info("ChartComponent created successfully")
 
@@ -110,13 +117,17 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                 result_for_llm=result,
                 ui_component=UiComponent(
                     rich_component=chart_component,
-                    simple_component=SimpleTextComponent(text=result),
+                    simple_component=SimpleImageComponent(
+                        url=image_url,
+                        alt_text=title,
+                    ),
                 ),
                 metadata={
                     "filename": args.filename,
                     "rows": row_count,
                     "columns": col_count,
-                    "chart": chart_dict,
+                    "chart_type": chart_dict["chart_type"],
+                    "image_format": chart_dict["format"],
                 },
             )
             logger.info("ToolResult created successfully")

@@ -13,6 +13,12 @@ from typing import Any, Callable, Optional
 from vanna.core.llm import LlmMessage, LlmRequest
 from vanna.core.tool import ToolCall
 from vanna.capabilities.sql_runner.statement import get_statement_type
+from vanna.components import (
+    StatusCardComponent,
+    Task,
+    TaskTrackerUpdateComponent,
+    UiComponent,
+)
 
 from vanna.core.question_understanding_subworkflow import (
     QuestUnderstand_Input,
@@ -446,10 +452,50 @@ class MainWorkflowExecutor:
         state.stage = "visualization"
         state.operation = "visualize_data"
 
+        visualization_task = Task(
+            title="시각화 실행",
+            description="SQL 실행 결과를 Matplotlib 차트로 변환합니다.",
+            status="in_progress",
+        )
+        visualization_status = StatusCardComponent(
+            title="시각화 실행",
+            status="running",
+            description="SQL 실행 결과를 시각화하고 있습니다.",
+            icon="📊",
+            metadata={"tool_name": "visualize_data"},
+        )
+        state.ui_components.extend(
+            [
+                UiComponent(
+                    rich_component=TaskTrackerUpdateComponent.add_task(
+                        visualization_task
+                    )
+                ),
+                UiComponent(rich_component=visualization_status),
+            ]
+        )
+
         filename = state.result.get("csv_name")
         if not isinstance(filename, str) or not filename:
             visualization.status = "skipped"
             visualization.current_node = None
+            state.ui_components.extend(
+                [
+                    UiComponent(
+                        rich_component=TaskTrackerUpdateComponent.update_task(
+                            visualization_task.id,
+                            status="error",
+                            detail="시각화할 SQL 결과 파일이 없습니다.",
+                        )
+                    ),
+                    UiComponent(
+                        rich_component=visualization_status.set_status(
+                            "warning",
+                            "시각화할 SQL 결과 파일이 없어 단계를 건너뛰었습니다.",
+                        )
+                    ),
+                ]
+            )
             return False
 
         result = await self.tool_registry.execute(
@@ -466,6 +512,28 @@ class MainWorkflowExecutor:
             visualization.errors.append(result.error or result.result_for_llm)
         if result.ui_component is not None:
             state.ui_components.append(result.ui_component)
+        completion_description = (
+            "Matplotlib 시각화가 완료되었습니다."
+            if result.success
+            else f"시각화에 실패했습니다: {result.error or result.result_for_llm}"
+        )
+        state.ui_components.extend(
+            [
+                UiComponent(
+                    rich_component=TaskTrackerUpdateComponent.update_task(
+                        visualization_task.id,
+                        status="completed" if result.success else "error",
+                        detail=completion_description,
+                    )
+                ),
+                UiComponent(
+                    rich_component=visualization_status.set_status(
+                        "success" if result.success else "error",
+                        completion_description,
+                    )
+                ),
+            ]
+        )
         return result.success
 
     @staticmethod

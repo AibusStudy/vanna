@@ -9,6 +9,7 @@ from vanna.core.main_workflow.excutor import MainWorkflowExecutor
 from vanna.core.main_workflow.state import MainWorkflowInput
 from vanna.core.tool import ToolCall, ToolResult, ToolSchema
 from vanna.core.user import User
+from vanna.components import StatusCardComponent, TaskTrackerUpdateComponent
 
 
 class SqlLlm:
@@ -82,6 +83,19 @@ async def test_fixed_pipeline_executes_sql_then_visualization() -> None:
     assert state.stage == "final"
     assert state.result["status"] == "success"
     assert state.subflow("visualization").status == "success"
+    visualization_cards = [
+        component.rich_component
+        for component in state.ui_components
+        if isinstance(component.rich_component, StatusCardComponent)
+        and component.rich_component.title == "시각화 실행"
+    ]
+    visualization_tasks = [
+        component.rich_component
+        for component in state.ui_components
+        if isinstance(component.rich_component, TaskTrackerUpdateComponent)
+    ]
+    assert [card.status for card in visualization_cards] == ["running", "success"]
+    assert len(visualization_tasks) == 2
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Tests for CSV-to-Plotly visualization tool output."""
+"""Tests for CSV-to-Chart.js visualization tool output."""
 
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ class CsvFileSystem:
 
 
 @pytest.mark.asyncio
-async def test_visualize_data_returns_plotly_chart_from_csv() -> None:
+async def test_visualize_data_returns_chartjs_chart_from_csv() -> None:
     context = SimpleNamespace(metadata={
         "main_workflow": {
             "metadata": {"candidates": [{
@@ -33,14 +33,14 @@ async def test_visualize_data_returns_plotly_chart_from_csv() -> None:
 
     assert result.success is True
     assert isinstance(result.ui_component.rich_component, ChartComponent)
-    assert result.ui_component.rich_component.chart_type == "plotly"
-    assert result.ui_component.rich_component.data["data"][0]["type"] == "bar"
-    assert result.ui_component.rich_component.data["layout"]["yaxis"]["title"]["text"] == "매출액"
+    assert result.ui_component.rich_component.chart_type == "chartjs"
+    assert result.ui_component.rich_component.data["type"] == "bar"
+    assert result.ui_component.rich_component.data["options"]["scales"]["y"]["title"]["text"] == "매출액"
     assert result.ui_component.rich_component.config["source_file"] == "query_results.csv"
     assert result.ui_component.rich_component.config["responsive"] is True
     assert isinstance(result.ui_component.simple_component, SimpleTextComponent)
     assert result.metadata["source_format"] == "csv"
-    assert result.metadata["visualization_format"] == "plotly_json"
+    assert result.metadata["visualization_format"] == "chartjs_json"
 
 
 def test_chart_title_is_summarized_from_structured_question() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 import pandas as pd
@@ -223,6 +224,46 @@ class PlotlyChartGenerator:
         if chart_type != "kpi":
             figure.update_xaxes(showgrid=False, zeroline=False, showline=False, tickfont={"color": self.MUTED_TEXT_COLOR}, title_font={"color": self.MUTED_TEXT_COLOR}, automargin=True)
             figure.update_yaxes(showgrid=False, zeroline=False, showline=False, tickfont={"color": self.MUTED_TEXT_COLOR}, title_font={"color": self.MUTED_TEXT_COLOR}, tickformat="~s", automargin=True)
+        if chart_type in {"bar", "grouped_bar", "line"}:
+            self._focus_large_value_axis(figure)
+
+    @classmethod
+    def _focus_large_value_axis(cls, figure: go.Figure) -> None:
+        """Expand small differences between large positive values with a rounded axis window."""
+        values: list[float] = []
+        for trace in figure.data:
+            if trace.type not in {"bar", "scatter"} or getattr(trace, "y", None) is None:
+                continue
+            for value in trace.y:
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if math.isfinite(number):
+                    values.append(number)
+
+        if len(values) < 2:
+            return
+        minimum, maximum = min(values), max(values)
+        spread = maximum - minimum
+        if minimum <= 0 or maximum < 1_000 or spread <= 0 or spread / maximum > 0.25:
+            return
+
+        step = cls._nice_step(spread / 4)
+        padding = max(spread * 0.2, step)
+        lower = math.floor((minimum - padding) / step) * step
+        upper = math.ceil((maximum + padding) / step) * step
+        lower = max(0, lower)
+        if lower >= minimum or upper <= maximum:
+            return
+        figure.update_yaxes(range=[lower, upper], dtick=step, tickformat=",d")
+
+    @staticmethod
+    def _nice_step(raw_step: float) -> float:
+        exponent = math.floor(math.log10(raw_step))
+        fraction = raw_step / (10 ** exponent)
+        nice_fraction = next(value for value in (1, 2, 5, 10) if fraction <= value)
+        return nice_fraction * (10 ** exponent)
 
     def _label(self, column: Any) -> str:
         name = str(column)

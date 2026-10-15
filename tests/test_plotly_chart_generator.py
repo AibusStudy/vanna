@@ -107,3 +107,28 @@ def test_year_and_gender_are_dimensions_with_korean_values_and_red_series() -> N
     assert result["figure"]["layout"]["xaxis"]["title"]["text"] == "성별"
     assert result["figure"]["layout"]["yaxis"]["title"]["text"] == "건강검진 수검자 수"
     assert "검진 연도: 2018년" in result["figure"]["data"][0]["hovertemplate"]
+
+
+def test_large_close_values_use_a_rounded_focused_axis_range() -> None:
+    result = PlotlyChartGenerator().generate_chart(
+        pd.DataFrame({
+            "exam_year": [2018, 2019, 2020],
+            "participant_count": [92_096, 92_251, 93_200],
+        }),
+        "연도별 수검자 추이",
+        column_metadata={
+            "exam_year": {
+                "logical_name": "검진 연도",
+                "sql_role": "time",
+                "semantic_type": "year",
+            },
+            "participant_count": {"logical_name": "수검자 수"},
+        },
+    )
+
+    yaxis = result["figure"]["layout"]["yaxis"]
+    assert yaxis["range"][0] < 92_096
+    assert yaxis["range"][0] > 0
+    assert yaxis["range"][1] > 93_200
+    assert yaxis["dtick"] in {100, 200, 500, 1_000}
+    assert yaxis["tickformat"] == ",d"

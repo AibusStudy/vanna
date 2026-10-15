@@ -15,7 +15,7 @@ from vanna.components import (
 )
 
 from .file_system import FileSystem, LocalFileSystem
-from vanna.integrations.plotly import PlotlyChartGenerator
+from vanna.integrations.chartjs import ChartJsChartGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -30,21 +30,21 @@ class VisualizeDataArgs(BaseModel):
 
 
 class VisualizeDataTool(Tool[VisualizeDataArgs]):
-    """Tool that reads CSV files and generates visualizations using dependency injection."""
+    """Tool that reads CSV files and generates Chart.js visualizations."""
 
     def __init__(
         self,
         file_system: Optional[FileSystem] = None,
-        chart_generator: Optional[PlotlyChartGenerator] = None,
+        chart_generator: Optional[ChartJsChartGenerator] = None,
     ):
-        """Initialize the tool with a filesystem and Plotly generator.
+        """Initialize the tool with a filesystem and Chart.js generator.
 
         Args:
             file_system: FileSystem implementation for reading CSV files (defaults to LocalFileSystem)
-            chart_generator: Plotly generator used to build an interactive figure
+            chart_generator: Chart.js generator used to build an interactive chart
         """
         self.file_system = file_system or LocalFileSystem()
-        self.chart_generator = chart_generator or PlotlyChartGenerator()
+        self.chart_generator = chart_generator or ChartJsChartGenerator()
 
     @property
     def name(self) -> str:
@@ -187,7 +187,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
 
             # Generate title
             title = self._chart_title(context, args.title)
-            # Build an interactive Plotly figure from the persisted SQL-result CSV.
+            # Build an interactive Chart.js payload from the persisted SQL-result CSV.
             logger.info("Generating chart...")
             chart_dict = self.chart_generator.generate_chart(
                 df,
@@ -204,11 +204,10 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             result = f"Created visualization from '{args.filename}' ({row_count} rows, {col_count} columns)."
 
             chart_component = ChartComponent(
-                chart_type="plotly",
-                data=chart_dict["figure"],
+                chart_type="chartjs",
+                data={"type": chart_dict["chart_type"], "data": chart_dict["data"], "options": chart_dict["options"]},
                 title=title,
                 config={
-                    **chart_dict["config"],
                     "source_file": args.filename,
                 },
             )
@@ -227,7 +226,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                     "rows": row_count,
                     "columns": col_count,
                     "chart_type": chart_dict["chart_type"],
-                    "visualization_format": "plotly_json",
+                    "visualization_format": "chartjs_json",
                     "source_format": "csv",
                 },
             )

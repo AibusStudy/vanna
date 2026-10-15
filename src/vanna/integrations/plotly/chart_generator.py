@@ -13,16 +13,16 @@ import plotly.io as pio
 class PlotlyChartGenerator:
     """Build an interactive Plotly figure from a SQL-result DataFrame."""
 
-    COLOR_PALETTE = ["#35B9F1", "#54D6BD", "#8C8CEB", "#F38CAF", "#77DCE8", "#A8E6CF"]
-    TEXT_COLOR = "#475569"
-    MUTED_TEXT_COLOR = "#7C8798"
+    COLOR_PALETTE = ["#B5121B", "#CF2E2E", "#E34A3F", "#E96B57", "#F08D75", "#F3B09E"]
+    TEXT_COLOR = "#242424"
+    MUTED_TEXT_COLOR = "#6B6B6B"
     GRID_COLOR = "#DCE3EA"
 
     def generate_chart(
         self,
         df: pd.DataFrame,
         title: str = "Chart",
-        column_metadata: dict[str, dict[str, str]] | None = None,
+        column_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if df.empty:
             raise ValueError("Cannot visualize empty DataFrame")
@@ -56,10 +56,12 @@ class PlotlyChartGenerator:
         numeric = df.select_dtypes(include=["number"]).columns.tolist()
         categorical = df.select_dtypes(include=["object", "category"]).columns.tolist()
         datetimes = df.select_dtypes(include=["datetime64"]).columns.tolist()
+        numeric_dimensions = [column for column in numeric if self._is_dimension(column)]
+        measures = [column for column in numeric if column not in numeric_dimensions]
 
-        if len(df) == 1 and numeric:
+        if len(df) == 1 and measures:
             figure = go.Figure()
-            values = numeric[:4]
+            values = measures[:4]
             for index, column in enumerate(values):
                 figure.add_trace(go.Indicator(
                     mode="number", value=float(df.iloc[0][column]),
@@ -70,11 +72,11 @@ class PlotlyChartGenerator:
             figure.update_layout(grid={"rows": 1, "columns": len(values), "pattern": "independent"})
             return figure, "kpi"
 
-        if datetimes and numeric:
+        if datetimes and measures:
             time_column = datetimes[0]
             ordered = df.sort_values(time_column)
             figure = go.Figure()
-            for index, column in enumerate(numeric[:5]):
+            for index, column in enumerate(measures[:5]):
                 figure.add_trace(go.Scatter(
                         x=ordered[time_column], y=ordered[column], mode="lines+markers+text", name=self._label(column),
                         text=[self._format_value(value) for value in ordered[column]], textposition="top center",
@@ -82,29 +84,65 @@ class PlotlyChartGenerator:
                         hovertemplate=f"<b>{self._label(column)}</b><br>{self._label(time_column)}: %{{x}}<br>값: %{{y:,}}<br>%{{customdata[0]}}<extra></extra>",
                     line={"color": self.COLOR_PALETTE[index % len(self.COLOR_PALETTE)], "width": 2},
                     fill="tozeroy" if index == 0 else None,
-                    fillcolor="rgba(53,185,241,0.12)" if index == 0 else None,
+                    fillcolor="rgba(181,18,27,0.10)" if index == 0 else None,
                 ))
             figure.update_layout(xaxis_title=self._label(time_column), yaxis_title="값", hovermode="closest")
             return figure, "line"
 
-        if len(numeric) == 1 and not categorical:
-            column = numeric[0]
+        if len(measures) == 1 and not categorical and not numeric_dimensions:
+            column = measures[0]
             return go.Figure(go.Histogram(x=df[column], marker_color=self.COLOR_PALETTE[0], name=self._label(column), hovertemplate=f"<b>{self._label(column)}</b><br>구간: %{{x}}<br>건수: %{{y:,}}<br>{self._description(column)}<extra></extra>")), "histogram"
 
-        if len(numeric) == 1 and len(categorical) == 1:
-            category, value = categorical[0], numeric[0]
+        dimensions = categorical + numeric_dimensions
+
+        if len(measures) == 1 and len(dimensions) >= 2:
+            value = measures[0]
+            time_dimensions = [column for column in dimensions if self._is_time_dimension(column)]
+            series = time_dimensions[0] if time_dimensions else dimensions[1]
+            category = next(column for column in dimensions if column != series)
+            grouped = df.groupby([category, series], dropna=False)[value].sum().reset_index()
+            figure = go.Figure()
+            for index, (series_value, rows) in enumerate(grouped.groupby(series, dropna=False, sort=True)):
+                series_label = self._display_value(series, series_value)
+                figure.add_trace(go.Bar(
+                    x=[self._display_value(category, item) for item in rows[category]],
+                    y=rows[value].tolist(),
+                    name=series_label,
+                    marker_color=self.COLOR_PALETTE[index % len(self.COLOR_PALETTE)],
+                    text=[self._format_value(item) for item in rows[value]],
+                    textposition="outside",
+                    customdata=[
+                        [self._label(category), self._display_value(category, item), self._label(value), self._description(value)]
+                        for item in rows[category]
+                    ],
+                    hovertemplate=(
+                        f"<b>{self._label(value)}</b><br>"
+                        "%{customdata[0]}: %{customdata[1]}<br>"
+                        f"{self._label(series)}: {series_label}<br>"
+                        "%{customdata[2]}: %{y:,}<br>%{customdata[3]}<extra></extra>"
+                    ),
+                ))
+            figure.update_layout(
+                barmode="group",
+                xaxis_title=self._label(category),
+                yaxis_title=self._label(value),
+            )
+            return figure, "grouped_bar"
+
+        if len(measures) == 1 and len(dimensions) == 1:
+            category, value = dimensions[0], measures[0]
             grouped = df.groupby(category, dropna=False)[value].sum().reset_index()
             descriptions = [self._description(value)] * len(grouped)
             if self._should_use_donut(grouped[value], value):
                 figure = go.Figure(go.Pie(
-                    labels=grouped[category].astype(str), values=grouped[value], hole=0.58,
+                    labels=[self._display_value(category, item) for item in grouped[category]], values=grouped[value], hole=0.58,
                     marker={"colors": self.COLOR_PALETTE, "line": {"color": "white", "width": 2}},
                     textinfo="percent+label", textposition="outside", customdata=descriptions,
                     hovertemplate=f"<b>%{{label}}</b><br>{self._label(value)}: %{{value:,}}<br>비율: %{{percent}}<br>%{{customdata}}<extra></extra>",
                 ))
                 return figure, "donut"
             figure = go.Figure(go.Bar(
-                x=grouped[category].astype(str), y=grouped[value], marker_color=self.COLOR_PALETTE[0],
+                x=[self._display_value(category, item) for item in grouped[category]], y=grouped[value], marker_color=self.COLOR_PALETTE[0],
                 name=self._label(value), text=[self._format_value(item) for item in grouped[value]], textposition="outside",
                 customdata=[[item] for item in descriptions],
                 hovertemplate=f"<b>{self._label(value)}</b><br>{self._label(category)}: %{{x}}<br>값: %{{y:,}}<br>%{{customdata[0]}}<extra></extra>",
@@ -112,13 +150,13 @@ class PlotlyChartGenerator:
             figure.update_layout(xaxis_title=self._label(category), yaxis_title=self._label(value))
             return figure, "bar"
 
-        if categorical and len(numeric) >= 2:
+        if categorical and len(measures) >= 2:
             category = categorical[0]
-            grouped = df.groupby(category, dropna=False)[numeric[:6]].sum().reset_index()
+            grouped = df.groupby(category, dropna=False)[measures[:6]].sum().reset_index()
             figure = go.Figure()
-            for index, column in enumerate(numeric[:6]):
+            for index, column in enumerate(measures[:6]):
                 figure.add_trace(go.Bar(
-                    x=grouped[category].astype(str), y=grouped[column], name=self._label(column),
+                    x=[self._display_value(category, item) for item in grouped[category]], y=grouped[column], name=self._label(column),
                     marker_color=self.COLOR_PALETTE[index % len(self.COLOR_PALETTE)],
                     text=[self._format_value(item) for item in grouped[column]], textposition="outside",
                     customdata=[[self._description(column)] for _ in range(len(grouped))],
@@ -127,8 +165,8 @@ class PlotlyChartGenerator:
             figure.update_layout(barmode="group", xaxis_title=self._label(category), yaxis_title="값")
             return figure, "grouped_bar"
 
-        if len(numeric) == 2:
-            first, second = numeric
+        if len(measures) == 2:
+            first, second = measures
             figure = go.Figure(go.Scatter(
                 x=df[first], y=df[second], mode="markers+text", name=self._label(second),
                 text=[self._format_value(item) for item in df[second]], textposition="top center",
@@ -139,10 +177,10 @@ class PlotlyChartGenerator:
             figure.update_layout(xaxis_title=self._label(first), yaxis_title=self._label(second))
             return figure, "scatter"
 
-        if len(numeric) >= 3:
-            correlation = df[numeric].corr()
-            labels = [self._label(column) for column in numeric]
-            figure = go.Figure(go.Heatmap(z=correlation.values, x=labels, y=labels, zmin=-1, zmax=1, texttemplate="%{z:.2f}", colorscale=[[0, "#8C8CEB"], [0.5, "#F8FAFC"], [1, "#54D6BD"]], colorbar={"title": "상관계수"}, hovertemplate="<b>%{x} × %{y}</b><br>상관계수: %{z:.3f}<extra></extra>"))
+        if len(measures) >= 3:
+            correlation = df[measures].corr()
+            labels = [self._label(column) for column in measures]
+            figure = go.Figure(go.Heatmap(z=correlation.values, x=labels, y=labels, zmin=-1, zmax=1, texttemplate="%{z:.2f}", colorscale=[[0, "#F3B09E"], [0.5, "#FFF7F5"], [1, "#B5121B"]], colorbar={"title": "상관계수"}, hovertemplate="<b>%{x} × %{y}</b><br>상관계수: %{z:.3f}<extra></extra>"))
             return figure, "heatmap"
 
         if len(categorical) >= 2:
@@ -194,6 +232,34 @@ class PlotlyChartGenerator:
     def _description(self, column: Any) -> str:
         metadata = self.column_metadata.get(str(column), {})
         return metadata.get("description") or ""
+
+    def _is_dimension(self, column: Any) -> bool:
+        metadata = self.column_metadata.get(str(column), {})
+        role = str(metadata.get("sql_role") or "").lower()
+        semantic_type = str(metadata.get("semantic_type") or "").lower()
+        name = str(column).lower()
+        return role in {"time", "code", "dimension", "identifier"} or semantic_type in {
+            "year", "year_month", "date", "gender", "category", "code"
+        } or any(token in name for token in ("_yr", "year", "_date", "_dt"))
+
+    def _is_time_dimension(self, column: Any) -> bool:
+        metadata = self.column_metadata.get(str(column), {})
+        return str(metadata.get("sql_role") or "").lower() == "time" or str(
+            metadata.get("semantic_type") or ""
+        ).lower() in {"year", "year_month", "date"}
+
+    def _display_value(self, column: Any, value: Any) -> str:
+        metadata = self.column_metadata.get(str(column), {})
+        semantic_type = str(metadata.get("semantic_type") or "").lower()
+        code_name = str(metadata.get("code_name") or "").upper()
+        raw = str(value)
+        if semantic_type == "gender" or code_name == "SEX_TYPE":
+            return {"F": "여성", "M": "남성"}.get(raw.upper(), raw)
+        if self._is_time_dimension(column) and raw.removesuffix(".0").isdigit():
+            digits = raw.removesuffix(".0")
+            if len(digits) == 4:
+                return f"{digits}년"
+        return raw
 
     @staticmethod
     def _format_value(value: Any) -> str:

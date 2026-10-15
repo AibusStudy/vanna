@@ -1,6 +1,6 @@
 """Tool for visualizing DataFrame data from CSV files."""
 
-from typing import Optional, Type
+from typing import Any, Optional, Type
 import logging
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -58,7 +58,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
         return VisualizeDataArgs
 
     @staticmethod
-    def _column_metadata(context: ToolContext) -> dict[str, dict[str, str]]:
+    def _column_metadata(context: ToolContext) -> dict[str, dict[str, Any]]:
         """Resolve physical columns and generated aliases to Korean business labels."""
         context_metadata = getattr(context, "metadata", {})
         if not isinstance(context_metadata, dict):
@@ -67,7 +67,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
         main = main if isinstance(main, dict) else {}
         metadata = main.get("metadata", {})
         candidates = metadata.get("candidates", []) if isinstance(metadata, dict) else []
-        labels: dict[str, dict[str, str]] = {}
+        labels: dict[str, dict[str, Any]] = {}
         for candidate in candidates if isinstance(candidates, list) else []:
             if not isinstance(candidate, dict):
                 continue
@@ -79,7 +79,25 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             labels[column] = {
                 "logical_name": logical_name if isinstance(logical_name, str) else column,
                 "description": description if isinstance(description, str) else "",
+                "sql_role": candidate.get("sql_role"),
+                "semantic_type": candidate.get("semantic_type"),
+                "code_name": candidate.get("code_name"),
             }
+
+        structured_question = main.get("structured_question", {})
+        structured_question = structured_question if isinstance(structured_question, dict) else {}
+        for dependency in structured_question.get("semantic_dependency_metadata", []):
+            if not isinstance(dependency, dict):
+                continue
+            column = dependency.get("column_name")
+            if isinstance(column, str) and column:
+                labels[column] = {
+                    "logical_name": dependency.get("column_logical_name") or column,
+                    "description": dependency.get("column_desc") or "",
+                    "sql_role": dependency.get("sql_role"),
+                    "semantic_type": dependency.get("semantic_type"),
+                    "code_name": dependency.get("code_name"),
+                }
 
         structured = main.get("structured_question", {})
         structured = structured if isinstance(structured, dict) else {}
@@ -105,6 +123,49 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                 }
         return labels
 
+    @staticmethod
+    def _chart_title(context: ToolContext, fallback: Optional[str]) -> str:
+        """Build a concise result title from the structured semantic contract."""
+        metadata = getattr(context, "metadata", {})
+        main = metadata.get("main_workflow", {}) if isinstance(metadata, dict) else {}
+        structured = main.get("structured_question", {}) if isinstance(main, dict) else {}
+        if not isinstance(structured, dict):
+            return fallback or "데이터 시각화"
+
+        time_conditions = structured.get("time_conditions", [])
+        period = ""
+        if isinstance(time_conditions, list) and time_conditions:
+            condition = time_conditions[0] if isinstance(time_conditions[0], dict) else {}
+            start = str(condition.get("start_value") or "")[:4]
+            end = str(condition.get("end_value") or "")[:4]
+            if start and end:
+                period = f"{start}년부터 {end}년까지"
+            elif isinstance(condition.get("original_text"), str):
+                period = condition["original_text"]
+
+        groups = []
+        for item in structured.get("group_by", []):
+            if not isinstance(item, dict):
+                continue
+            label = item.get("original_text") or item.get("field_meaning")
+            if isinstance(label, str) and label:
+                groups.append(label.rstrip("별") + "별")
+
+        target = ""
+        target_entity = structured.get("target_entity", {})
+        if isinstance(target_entity, dict):
+            target = target_entity.get("entity_meaning") or target_entity.get("original_text") or ""
+        if not target:
+            aggregations = structured.get("aggregation", [])
+            if isinstance(aggregations, list) and aggregations and isinstance(aggregations[0], dict):
+                target = aggregations[0].get("field_meaning") or ""
+        target = str(target).replace("받은 사람", "수검자").strip()
+
+        parts = [part for part in (period, "·".join(dict.fromkeys(groups)), target) if part]
+        if parts:
+            return " ".join(parts) + (" 추이" if period else " 현황")
+        return fallback or "데이터 시각화"
+
     async def execute(
         self, context: ToolContext, args: VisualizeDataArgs
     ) -> ToolResult:
@@ -125,7 +186,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             )
 
             # Generate title
-            title = args.title or f"Visualization of {args.filename}"
+            title = self._chart_title(context, args.title)
             # Build an interactive Plotly figure from the persisted SQL-result CSV.
             logger.info("Generating chart...")
             chart_dict = self.chart_generator.generate_chart(

@@ -41,3 +41,28 @@ async def test_visualize_data_returns_plotly_chart_from_csv() -> None:
     assert isinstance(result.ui_component.simple_component, SimpleTextComponent)
     assert result.metadata["source_format"] == "csv"
     assert result.metadata["visualization_format"] == "plotly_json"
+
+
+def test_chart_title_is_summarized_from_structured_question() -> None:
+    context = SimpleNamespace(metadata={
+        "main_workflow": {
+            "structured_question": {
+                "target_entity": {"entity_meaning": "건강검진 받은 사람"},
+                "group_by": [
+                    {"original_text": "연도별"},
+                    {"original_text": "성별"},
+                ],
+                "time_conditions": [{
+                    "start_value": "20180101",
+                    "end_value": "20201231",
+                }],
+            }
+        }
+    })
+
+    title = VisualizeDataTool._chart_title(
+        context,
+        "2018년부터 2020년까지 성별·연도별 건강검진 받은 사람의 추이를 보여줘.",
+    )
+
+    assert title == "2018년부터 2020년까지 연도별·성별 건강검진 수검자 추이"

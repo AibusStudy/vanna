@@ -68,3 +68,42 @@ def test_single_row_numeric_result_uses_kpi_indicators() -> None:
         "indicator",
         "indicator",
     ]
+
+
+def test_year_and_gender_are_dimensions_with_korean_values_and_red_series() -> None:
+    result = PlotlyChartGenerator().generate_chart(
+        pd.DataFrame({
+            "SEX_TYPE": ["F", "M", "F", "M"],
+            "HLCK_BIZ_YR": [2018, 2018, 2019, 2019],
+            "general_exam_completed_count": [140_622, 136_925, 141_100, 137_200],
+        }),
+        "2018년부터 2019년까지 성별·연도별 건강검진 수검자 추이",
+        column_metadata={
+            "SEX_TYPE": {
+                "logical_name": "성별",
+                "description": "남성은 M, 여성은 F로 표기함",
+                "sql_role": "code",
+                "semantic_type": "gender",
+                "code_name": "SEX_TYPE",
+            },
+            "HLCK_BIZ_YR": {
+                "logical_name": "검진 연도",
+                "description": "건강검진 사업연도",
+                "sql_role": "time",
+                "semantic_type": "year",
+            },
+            "general_exam_completed_count": {
+                "logical_name": "건강검진 수검자 수",
+                "description": "건강검진을 받은 고유 인원 수",
+            },
+        },
+    )
+
+    assert result["chart_type"] == "grouped_bar"
+    assert [trace["name"] for trace in result["figure"]["data"]] == ["2018년", "2019년"]
+    assert result["figure"]["data"][0]["x"] == ["여성", "남성"]
+    assert result["figure"]["data"][0]["y"] == [140_622, 136_925]
+    assert result["figure"]["data"][0]["marker"]["color"] == "#B5121B"
+    assert result["figure"]["layout"]["xaxis"]["title"]["text"] == "성별"
+    assert result["figure"]["layout"]["yaxis"]["title"]["text"] == "건강검진 수검자 수"
+    assert "검진 연도: 2018년" in result["figure"]["data"][0]["hovertemplate"]

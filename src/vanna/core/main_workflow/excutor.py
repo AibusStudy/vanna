@@ -172,6 +172,19 @@ class MainWorkflowExecutor:
         self.tool_registry = tool_registry
         self.llm_context_enhancer = llm_context_enhancer
 
+    @staticmethod
+    def _sync_tool_context(
+        input: MainWorkflowInput,
+        state: MainWorkflowTurnState,
+    ) -> None:
+        """Expose the latest workflow evidence to tools executed inside the pipeline."""
+        metadata = getattr(input.tool_context, "metadata", None)
+        if not isinstance(metadata, dict):
+            metadata = {}
+            input.tool_context.metadata = metadata
+        metadata["main_workflow"] = state.to_metadata()
+        metadata["structured_question"] = dict(state.structured_question)
+
     #     self._apply_subworkflow_limits(
     #         self.question_understanding_executor,
     #         max_steps=max_workflow_steps,
@@ -398,6 +411,10 @@ class MainWorkflowExecutor:
                         error_message=last_error,
                     )
                 else:
+                    # run_sql validates that metadata discovery succeeded in the
+                    # current turn. Agent._send_message cannot publish this state
+                    # after run() returns because the tool executes inside run().
+                    self._sync_tool_context(input, state)
                     result = await self.tool_registry.execute(tool_call, input.tool_context)
                     state.record_sql_attempt(
                         sql=sql,

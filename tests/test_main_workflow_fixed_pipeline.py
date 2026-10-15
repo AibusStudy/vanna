@@ -1,5 +1,6 @@
 """Tests for the fixed SQL execution and visualization pipeline."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -33,9 +34,11 @@ class SqlLlm:
 class RecordingRegistry:
     def __init__(self) -> None:
         self.names = []
+        self.context_metadata = []
 
     async def execute(self, call, context):
         self.names.append(call.name)
+        self.context_metadata.append(deepcopy(context.metadata))
         if call.name == "run_sql":
             return ToolResult(
                 success=True,
@@ -65,7 +68,7 @@ def workflow_input():
                 parameters={},
             ),
         ],
-        tool_context=SimpleNamespace(user=user),
+        tool_context=SimpleNamespace(user=user, metadata={}),
     )
 
 
@@ -80,6 +83,10 @@ async def test_fixed_pipeline_executes_sql_then_visualization() -> None:
     state = await executor.run(workflow_input())
 
     assert registry.names == ["run_sql", "visualize_data"]
+    run_sql_context = registry.context_metadata[0]
+    assert "main_workflow" in run_sql_context
+    assert run_sql_context["main_workflow"]["stage"] == "sql_generation"
+    assert "structured_question" in run_sql_context
     assert state.stage == "final"
     assert state.result["status"] == "success"
     assert state.subflow("visualization").status == "success"

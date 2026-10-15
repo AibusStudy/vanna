@@ -11,15 +11,18 @@ from vanna.core.main_workflow.state import MainWorkflowInput
 from vanna.core.tool import ToolCall, ToolResult, ToolSchema
 from vanna.core.user import User
 from vanna.components import StatusCardComponent, TaskTrackerUpdateComponent
+from vanna.integrations.openai import OpenAILlmService
 
 
 class SqlLlm:
     def __init__(self, sql: str) -> None:
         self.sql = sql
         self.calls = 0
+        self.requests = []
 
     async def send_request(self, request):
         self.calls += 1
+        self.requests.append(request)
         return LlmResponse(
             tool_calls=[
                 ToolCall(
@@ -75,14 +78,19 @@ def workflow_input():
 @pytest.mark.asyncio
 async def test_fixed_pipeline_executes_sql_then_visualization() -> None:
     registry = RecordingRegistry()
+    llm = SqlLlm("SELECT region, SUM(sales) FROM orders GROUP BY region")
     executor = MainWorkflowExecutor(
-        llm_service=SqlLlm("SELECT region, SUM(sales) FROM orders GROUP BY region"),
+        llm_service=llm,
         tool_registry=registry,
     )
 
     state = await executor.run(workflow_input())
 
     assert registry.names == ["run_sql", "visualize_data"]
+    assert llm.requests[0].tool_choice == {
+        "type": "function",
+        "function": {"name": "run_sql"},
+    }
     run_sql_context = registry.context_metadata[0]
     assert "main_workflow" in run_sql_context
     assert run_sql_context["main_workflow"]["stage"] == "sql_generation"
@@ -117,3 +125,23 @@ async def test_fixed_pipeline_rejects_non_select_sql() -> None:
     assert llm.calls == 2
     assert state.result["status"] == "failed"
     assert "read-only SELECT" in state.result["message"]
+
+
+def test_openai_payload_preserves_required_run_sql_tool_choice() -> None:
+    service = object.__new__(OpenAILlmService)
+    service.model = "test-model"
+    request = workflow_input()
+    llm_request = SimpleNamespace(
+        system_prompt="Generate SQL",
+        messages=[],
+        tools=request.tool_schemas,
+        tool_choice={"type": "function", "function": {"name": "run_sql"}},
+        max_tokens=None,
+    )
+
+    payload = service._build_payload(llm_request)
+
+    assert payload["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "run_sql"},
+    }

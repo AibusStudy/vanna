@@ -384,6 +384,10 @@ class MainWorkflowExecutor:
             request = LlmRequest(
                 messages=messages,
                 tools=[run_sql_schema],
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "run_sql"},
+                },
                 user=input.tool_context.user,
                 stream=False,
                 temperature=0,
@@ -395,7 +399,15 @@ class MainWorkflowExecutor:
                 call for call in (response.tool_calls or []) if call.name == "run_sql"
             ]
             if len(run_sql_calls) != 1:
-                last_error = "SQL generation must return exactly one run_sql tool call."
+                received_names = [
+                    call.name for call in (response.tool_calls or [])
+                ]
+                last_error = (
+                    "SQL generation must return exactly one run_sql tool call. "
+                    f"Received {len(run_sql_calls)} run_sql call(s); "
+                    f"all tool calls={received_names}; "
+                    f"finish_reason={response.finish_reason!r}."
+                )
                 state.record_sql_attempt(sql=None, status="failed", error_message=last_error)
             else:
                 tool_call = run_sql_calls[0]

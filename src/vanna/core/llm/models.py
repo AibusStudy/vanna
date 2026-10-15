@@ -28,6 +28,10 @@ class LlmRequest(BaseModel):
     tools: Optional[List[Any]] = Field(
         default=None, description="Available tools"
     )  # Will be ToolSchema but avoiding circular import
+    tool_choice: Optional[Any] = Field(
+        default=None,
+        description="Provider-specific tool selection policy, such as a required function",
+    )
     user: User = Field(description="User making the request")
     stream: bool = Field(default=False, description="Whether to stream response")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

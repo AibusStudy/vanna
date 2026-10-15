@@ -57,6 +57,54 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
     def get_args_schema(self) -> Type[VisualizeDataArgs]:
         return VisualizeDataArgs
 
+    @staticmethod
+    def _column_metadata(context: ToolContext) -> dict[str, dict[str, str]]:
+        """Resolve physical columns and generated aliases to Korean business labels."""
+        context_metadata = getattr(context, "metadata", {})
+        if not isinstance(context_metadata, dict):
+            return {}
+        main = context_metadata.get("main_workflow", {})
+        main = main if isinstance(main, dict) else {}
+        metadata = main.get("metadata", {})
+        candidates = metadata.get("candidates", []) if isinstance(metadata, dict) else []
+        labels: dict[str, dict[str, str]] = {}
+        for candidate in candidates if isinstance(candidates, list) else []:
+            if not isinstance(candidate, dict):
+                continue
+            column = candidate.get("column_name")
+            if not isinstance(column, str) or not column:
+                continue
+            logical_name = candidate.get("column_logical_name")
+            description = candidate.get("column_desc")
+            labels[column] = {
+                "logical_name": logical_name if isinstance(logical_name, str) else column,
+                "description": description if isinstance(description, str) else "",
+            }
+
+        structured = main.get("structured_question", {})
+        structured = structured if isinstance(structured, dict) else {}
+        for item in structured.get("aggregation", []):
+            if not isinstance(item, dict):
+                continue
+            alias = item.get("alias")
+            meaning = item.get("field_meaning")
+            if isinstance(alias, str) and alias:
+                labels[alias] = {
+                    "logical_name": meaning if isinstance(meaning, str) else alias,
+                    "description": item.get("original_text") if isinstance(item.get("original_text"), str) else "",
+                }
+        for item in structured.get("output_fields", []):
+            if not isinstance(item, dict):
+                continue
+            alias = item.get("alias") or item.get("field_name")
+            meaning = item.get("field_meaning") or item.get("logical_name")
+            if isinstance(alias, str) and alias:
+                labels[alias] = {
+                    "logical_name": meaning if isinstance(meaning, str) else alias,
+                    "description": item.get("original_text") if isinstance(item.get("original_text"), str) else "",
+                }
+        return labels
+
     async def execute(
         self, context: ToolContext, args: VisualizeDataArgs
     ) -> ToolResult:
@@ -80,7 +128,11 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             title = args.title or f"Visualization of {args.filename}"
             # Build an interactive Plotly figure from the persisted SQL-result CSV.
             logger.info("Generating chart...")
-            chart_dict = self.chart_generator.generate_chart(df, title)
+            chart_dict = self.chart_generator.generate_chart(
+                df,
+                title,
+                column_metadata=self._column_metadata(context),
+            )
             logger.info(
                 f"Chart generated, type: {type(chart_dict)}, keys: {list(chart_dict.keys()) if isinstance(chart_dict, dict) else 'N/A'}"
             )

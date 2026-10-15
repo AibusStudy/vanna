@@ -16,8 +16,18 @@ class CsvFileSystem:
 
 @pytest.mark.asyncio
 async def test_visualize_data_returns_plotly_chart_from_csv() -> None:
+    context = SimpleNamespace(metadata={
+        "main_workflow": {
+            "metadata": {"candidates": [{
+                "column_name": "sales",
+                "column_logical_name": "매출액",
+                "column_desc": "지역별 매출 합계",
+            }]},
+            "structured_question": {},
+        }
+    })
     result = await VisualizeDataTool(file_system=CsvFileSystem()).execute(
-        SimpleNamespace(),
+        context,
         VisualizeDataArgs(filename="query_results.csv", title="Sales by region"),
     )
 
@@ -25,6 +35,7 @@ async def test_visualize_data_returns_plotly_chart_from_csv() -> None:
     assert isinstance(result.ui_component.rich_component, ChartComponent)
     assert result.ui_component.rich_component.chart_type == "plotly"
     assert result.ui_component.rich_component.data["data"][0]["type"] == "bar"
+    assert result.ui_component.rich_component.data["layout"]["yaxis"]["title"]["text"] == "매출액"
     assert result.ui_component.rich_component.config["source_file"] == "query_results.csv"
     assert result.ui_component.rich_component.config["responsive"] is True
     assert isinstance(result.ui_component.simple_component, SimpleTextComponent)

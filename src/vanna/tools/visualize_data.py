@@ -15,7 +15,7 @@ from vanna.components import (
 )
 
 from .file_system import FileSystem, LocalFileSystem
-from vanna.integrations.chartjs import ChartJsChartGenerator
+from vanna.integrations.chartjs import ChartJsChartGenerator, VisualizationDashboardPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
         """
         self.file_system = file_system or LocalFileSystem()
         self.chart_generator = chart_generator or ChartJsChartGenerator()
+        self.dashboard_planner = VisualizationDashboardPlanner(self.chart_generator)
 
     @property
     def name(self) -> str:
@@ -82,6 +83,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                 "sql_role": candidate.get("sql_role"),
                 "semantic_type": candidate.get("semantic_type"),
                 "code_name": candidate.get("code_name"),
+                "unit": candidate.get("unit") or candidate.get("column_unit"),
             }
 
         structured_question = main.get("structured_question", {})
@@ -97,6 +99,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                     "sql_role": dependency.get("sql_role"),
                     "semantic_type": dependency.get("semantic_type"),
                     "code_name": dependency.get("code_name"),
+                    "unit": dependency.get("unit") or dependency.get("column_unit"),
                 }
 
         structured = main.get("structured_question", {})
@@ -110,6 +113,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                 labels[alias] = {
                     "logical_name": meaning if isinstance(meaning, str) else alias,
                     "description": item.get("original_text") if isinstance(item.get("original_text"), str) else "",
+                    "unit": item.get("unit"),
                 }
         for item in structured.get("output_fields", []):
             if not isinstance(item, dict):
@@ -120,6 +124,7 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                 labels[alias] = {
                     "logical_name": meaning if isinstance(meaning, str) else alias,
                     "description": item.get("original_text") if isinstance(item.get("original_text"), str) else "",
+                    "unit": item.get("unit"),
                 }
         return labels
 
@@ -189,13 +194,16 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             title = self._chart_title(context, args.title)
             # Build an interactive Chart.js payload from the persisted SQL-result CSV.
             logger.info("Generating chart...")
-            chart_dict = self.chart_generator.generate_chart(
-                df,
-                title,
-                column_metadata=self._column_metadata(context),
+            column_metadata = self._column_metadata(context)
+            main_metadata = getattr(context, "metadata", {})
+            main_workflow = main_metadata.get("main_workflow", {}) if isinstance(main_metadata, dict) else {}
+            structured_question = main_workflow.get("structured_question", {}) if isinstance(main_workflow, dict) else {}
+            dashboard = self.dashboard_planner.plan(
+                df, title=title, column_metadata=column_metadata,
+                structured_question=structured_question if isinstance(structured_question, dict) else {},
             )
             logger.info(
-                f"Chart generated, type: {type(chart_dict)}, keys: {list(chart_dict.keys()) if isinstance(chart_dict, dict) else 'N/A'}"
+                "Visualization dashboard generated with %s views", len(dashboard["views"])
             )
 
             # Create result message
@@ -204,8 +212,8 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
             result = f"Created visualization from '{args.filename}' ({row_count} rows, {col_count} columns)."
 
             chart_component = ChartComponent(
-                chart_type="chartjs",
-                data={"type": chart_dict["chart_type"], "data": chart_dict["data"], "options": chart_dict["options"]},
+                chart_type="visualization_dashboard",
+                data=dashboard,
                 title=title,
                 config={
                     "source_file": args.filename,
@@ -225,8 +233,9 @@ class VisualizeDataTool(Tool[VisualizeDataArgs]):
                     "filename": args.filename,
                     "rows": row_count,
                     "columns": col_count,
-                    "chart_type": chart_dict["chart_type"],
-                    "visualization_format": "chartjs_json",
+                    "chart_type": "visualization_dashboard",
+                    "view_count": len(dashboard["views"]),
+                    "visualization_format": "dashboard_json",
                     "source_format": "csv",
                 },
             )

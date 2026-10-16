@@ -15,7 +15,7 @@ class CsvFileSystem:
 
 
 @pytest.mark.asyncio
-async def test_visualize_data_returns_chartjs_chart_from_csv() -> None:
+async def test_visualize_data_returns_dashboard_from_csv() -> None:
     context = SimpleNamespace(metadata={
         "main_workflow": {
             "metadata": {"candidates": [{
@@ -33,14 +33,18 @@ async def test_visualize_data_returns_chartjs_chart_from_csv() -> None:
 
     assert result.success is True
     assert isinstance(result.ui_component.rich_component, ChartComponent)
-    assert result.ui_component.rich_component.chart_type == "chartjs"
-    assert result.ui_component.rich_component.data["type"] == "bar"
-    assert result.ui_component.rich_component.data["options"]["scales"]["y"]["title"]["text"] == "매출액"
+    assert result.ui_component.rich_component.chart_type == "visualization_dashboard"
+    dashboard = result.ui_component.rich_component.data
+    assert dashboard["dataset"]["rowCount"] == 2
+    assert dashboard["dataset"]["columns"][1]["label"] == "매출액"
+    primary = next(view for view in dashboard["views"] if view["id"] == "primary-chart")
+    assert primary["chartType"] == "bar"
+    assert primary["options"]["scales"]["y"]["title"]["text"] == "매출액"
     assert result.ui_component.rich_component.config["source_file"] == "query_results.csv"
     assert result.ui_component.rich_component.config["responsive"] is True
     assert isinstance(result.ui_component.simple_component, SimpleTextComponent)
     assert result.metadata["source_format"] == "csv"
-    assert result.metadata["visualization_format"] == "chartjs_json"
+    assert result.metadata["visualization_format"] == "dashboard_json"
 
 
 def test_chart_title_is_summarized_from_structured_question() -> None:
